@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>fms_system</name>
+  <name>bolt_fms</name>
   <version>0.0.1</version>
   <description>FMS system with multiple ROS2 nodes</description>
   <maintainer email="kdjin11@naver.com">gyucheol</maintainer>
