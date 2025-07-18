@@ -1,0 +1,3 @@
+[submodule "jetcobot"]
+	path = jetcobot
+	url = https://github.com/kemjensak/jetcobot
