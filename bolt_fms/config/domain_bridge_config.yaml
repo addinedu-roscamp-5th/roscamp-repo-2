@@ -1,0 +1,13 @@
+# Name of the domain bridge, used for node naming and logging
+name: my_bridge
+topics:
+  tracked_pose:
+    type: geometry_msgs/msg/PoseStamped
+    from_domain: 33
+    to_domain: 100
+    remap: robot1/tracked_pose
+
+  pinky_battery_present:
+    type: std_msgs/msg/String
+    from_domain: 33
+    to_domain: 100
