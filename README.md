@@ -6,7 +6,7 @@ ROS2와 AI를 활용한 자율주행 로봇개발자 부트캠프 2팀 저장소
 
 ```bash
 cd ~/colcon_ws/src
-git clone https://github.com/addinedu-roscamp-5th/roscamp-repo-2.git --resursive
+git clone https://github.com/addinedu-roscamp-5th/roscamp-repo-2.git --recursive
 cd ~/colcon_ws
 rosdep install --from-paths src --ignore-src -r -y # or 'rd'
 colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --symlink-install # or 'cb'
