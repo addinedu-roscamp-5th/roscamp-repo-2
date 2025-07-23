@@ -3,7 +3,7 @@ import threading
 import time
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseStamped
 from math import atan2, sin, cos
 
 import cv2
@@ -11,13 +11,13 @@ import numpy as np
 from pupil_apriltags import Detector
 
 # === 설정 ===
-TAG_ID = 4
-CAMERA_INDEX = 3
+TAG_ID = 2
+CAMERA_INDEX = 2
 VISUALIZE = True
 
 # === 그리드 설정 ===
-CAP_WIDTH = 1920 
-CAP_HEIGHT = 1080
+CAP_WIDTH = 1920 /1.5
+CAP_HEIGHT = 1080/1.5
 ROWS, COLS = 12, 24
 REAL_MAX_WIDTH = 1.91
 REAL_MAX_HEIGHT = 0.91
@@ -32,8 +32,8 @@ vertical_divisions = COLS - 1
 # === ROS 노드 클래스 ===
 class PeriodicInitialPosePublisher(Node):
     def __init__(self, get_pose_func, publish_period=5.0):
-        super().__init__('initial_pose_publisher')
-        self.pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
+        super().__init__('camera_pose_publisher')
+        self.pub = self.create_publisher(PoseStamped, '/camera_pose', 10)
         self.get_pose_func = get_pose_func
         self.timer = self.create_timer(publish_period, self.publish_pose)
 
@@ -45,23 +45,17 @@ class PeriodicInitialPosePublisher(Node):
         x, y, yaw = pose
         now = self.get_clock().now()
 
-        msg = PoseWithCovarianceStamped()
+        msg = PoseStamped()
         msg.header.stamp = now.to_msg()
         msg.header.frame_id = 'map'
-        msg.pose.pose.position.x = float(x)
-        msg.pose.pose.position.y = float(y)
-        msg.pose.pose.position.z = 0.0
-        msg.pose.pose.orientation.z = sin(yaw / 2.0)
-        msg.pose.pose.orientation.w = cos(yaw / 2.0)
-
-        cov = [0.0]*36
-        cov[0] = 0.25
-        cov[7] = 0.25
-        cov[35] = 0.06853891909122467
-        msg.pose.covariance = cov
+        msg.pose.position.x = float(x)
+        msg.pose.position.y = float(y)
+        msg.pose.position.z = 0.0
+        msg.pose.orientation.z = sin(yaw / 2.0)
+        msg.pose.orientation.w = cos(yaw / 2.0)
 
         self.pub.publish(msg)
-        self.get_logger().info(f"🛰️ /initialpose → x:{x:.3f}, y:{y:.3f}, yaw:{yaw:.3f} rad")
+        self.get_logger().info(f"🛰️ /camera_pose → x:{x:.3f}, y:{y:.3f}, yaw:{yaw:.3f} rad")
 
 # === 웹캠 추적 스레드 ===
 class WebcamThread(threading.Thread):
@@ -142,17 +136,17 @@ class WebcamThread(threading.Thread):
         for row in range(rows):
             pts = [pt for r, c, pt in grid_points if r == row]
             for i in range(len(pts) - 1):
-                cv2.line(img, pts[i], pts[i + 1], (255, 255, 0), 1)
+                cv2.line(img, pts[i], pts[i + 1], (255, 255, 0), 2)
 
         # 세로줄
         for col in range(cols):
             pts = [pt for r, c, pt in grid_points if c == col]
             for i in range(len(pts) - 1):
-                cv2.line(img, pts[i], pts[i + 1], (0, 255, 255), 1)
+                cv2.line(img, pts[i], pts[i + 1], (0, 255, 255), 2)
 
         # 점
         for row, col, pt in grid_points:
-            cv2.circle(img, pt, 2, (0, 0, 255), -1)
+            cv2.circle(img, pt, 2, (0, 0, 255), 2)
 
 
     # 📍 각 꼭짓점에서 가장 가까운 실제 에이프릴 태그 중심 좌표로 snap
@@ -165,8 +159,6 @@ class WebcamThread(threading.Thread):
                 min_dist = dist
                 closest = c
         return tuple(closest)
-
-
     
 
     def run(self):
@@ -266,7 +258,7 @@ def main():
     while(True):
         if webcam_thread.get_pose() is not None:
             # ROS 노드 생성 시 get_pose_func을 전달
-            ros_node = PeriodicInitialPosePublisher(get_pose_func=(webcam_thread.get_transed_pose), publish_period=0.5)
+            ros_node = PeriodicInitialPosePublisher(get_pose_func=(webcam_thread.get_transed_pose), publish_period=0.03)
             break
 
     try:

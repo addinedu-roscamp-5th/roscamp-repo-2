@@ -84,7 +84,7 @@ at_detector = Detector(
     debug=0
 )
 
-cap = cv2.VideoCapture(3)
+cap = cv2.VideoCapture(2)
 if not cap.isOpened():
     print("오류: 카메라를 열 수 없습니다.")
     exit()
