@@ -35,11 +35,6 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(PROGRAMS
-  scripts/auto_grid_and_publisher.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/
 )

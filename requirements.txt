@@ -1,0 +1,5 @@
+pupil_apriltags
+opencv-python
+numpy
+pyyaml
+PySide6
