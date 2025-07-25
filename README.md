@@ -14,7 +14,7 @@ source ./install/local_setup.bash # or 'sb'
 ```
 
 # Bolt_fms
-## How to build
+## How to build & Run
 > 워크스페이스로 이동 
 ```bash
 cd ~/colcon_ws
@@ -31,6 +31,10 @@ virtualenv -p python3 ./venv # Make a virtual env and activate it
 source ./venv/bin/activate
 touch ./venv/COLCON_IGNORE # Make sure that colcon does not try to build the venv
 pip install -r src/roscamp-repo-2/requirements.txt
+```
+> 실행 예시
+```bash
+ros2 run bolt_fms tag_tracker_node # 실행인자 확인 후 사용할 것
 ```
 
 # common_pkgs
