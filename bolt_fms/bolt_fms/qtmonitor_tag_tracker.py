@@ -93,47 +93,11 @@ class WebcamThread(threading.Thread):
         self.p1 = None
         self.p2 = None
         self.p3 = None
-        self.printed_once = True  # 태그 ID 한 번만 출력
-        self.grid_corners = None   # trapezoid 꼭짓점 저장
-        self.tag_center_set = set() 
-        self.all_tag_poses = []  # 리스트로 변경
+        self.printed_once = True
+        self.grid_corners = None
+        self.tag_center_set = set()
+        self.all_tag_poses = []
 
-
-    # def get_pose(self):
-    #     with self.result_lock:
-    #         return self.pose
-    
-    # def get_transed_pose(self):
-    #     with self.result_lock:
-    #         if self.pose is None:
-    #             return None
-    #         x, y, yaw = self.pose
-    #         if None in (self.p0, self.p1, self.p2, self.p3):
-    #             return None
-
-    #         # 원근 변환 역행렬 계산 (이미지 → 상대좌표)
-    #         grid_corners = np.array([self.p0, self.p1, self.p2, self.p3], dtype=np.float32)
-    #         unit_square = np.array([
-    #             [0.0, 0.0],
-    #             [1.0, 0.0],
-    #             [0.0, 1.0],
-    #             [1.0, 1.0],
-    #         ], dtype=np.float32)
-
-    #         Minv = cv2.getPerspectiveTransform(grid_corners, unit_square)
-
-    #         # 현재 (x, y) → (u, v) 상대 좌표
-    #         img_point = np.array([[[x, y]]], dtype=np.float32)
-    #         relative_point = cv2.perspectiveTransform(img_point, Minv)
-    #         u, v = relative_point[0][0]  # 상대 좌표계 [0.0 ~ 1.0]
-
-    #         # 실제 물리 좌표계로 변환
-    #         real_x = u * REAL_MAX_WIDTH
-    #         real_y = REAL_MAX_HEIGHT - v * REAL_MAX_HEIGHT
-
-    #         return real_x, real_y, yaw
-
-        
     # 보간 함수
     def interpolate(self, p1, p2, t):
         return (int(p1[0] + t * (p2[0] - p1[0])), int(p1[1] + t * (p2[1] - p1[1])))
@@ -211,89 +175,37 @@ class WebcamThread(threading.Thread):
         detector = Detector(families='tag36h11')
         print(f"🎯 AprilTag ID {self.tag_id} 추적 중...")
 
-
-        # tag_centers = []              # [[x, y], ...]
-        # tag_id_to_center = {}         # {id: (x, y)}
-        center_to_tag_id = {}          # {(x, y): id}  # ✅ 현재 프레임에서 감지된 태그 중심점과 ID 매핑
-        # 매 프레임마다 새로 감지된 중심점 저장할 집합
-        # current_tag_centers = set()
-        current_tag_poses_list = []  # [{"id": tag_id, "pose": (x, y, yaw)}, ...]
-
-
         while self.running:
             ret, frame = cap.read()
             if not ret:
                 print("오류: 프레임을 읽을 수 없습니다.")
                 break
 
-            h, w = frame.shape[:2]
-
-            top_left     = (0, 0)
-            top_right    = (w - 1, 0)
-            bottom_left  = (0, h - 1)
-            bottom_right = (w - 1, h - 1)
-
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             tags = detector.detect(gray, estimate_tag_pose=False)
 
-            current_tag_poses = {}  # 현재 프레임에서 감지된 태그 중심점과 ID 매핑
-
+            current_tag_poses_list = []
             for tag in tags:
                 cX, cY = int(tag.center[0]), int(tag.center[1])
                 pt0, pt1 = tag.corners[0], tag.corners[1]
                 dx = pt1[0] - pt0[0]
                 dy = pt1[1] - pt0[1]
                 yaw = atan2(dy, dx)
-
                 current_tag_poses_list.append({
                     "id": tag.tag_id,
-                    "pose": (cX, cY, -yaw)
+                    "pose": (cX, cY, -yaw),
+                    "corners": [(int(p[0]), int(p[1])) for p in tag.corners]
                 })
-
                 if tag.tag_id == self.tag_id:
                     with self.result_lock:
                         self.pose = (cX, cY, -yaw)
 
-                # current_tag_poses[tag.tag_id] = (cX, cY, -yaw)
-
-                # 시각화
-                if self.visualize:
-                    corners = [(int(p[0]), int(p[1])) for p in tag.corners]
-                    for i in range(4):
-                        cv2.line(frame, corners[i], corners[(i+1)%4], (0,255,0), 2)
-                    cv2.circle(frame, (cX, cY), 5, (0,0,255), -1)
-                    cv2.putText(frame, f"ID:{tag.tag_id}", (cX+5, cY-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 4)
-                    cv2.putText(frame, f"ID:{tag.tag_id}", (cX+5, cY-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-            
             with self.result_lock:
                 self.all_tag_poses = current_tag_poses_list
 
-
-            if len(self.all_tag_poses) >= 4 or self.printed_once:
-                tag_center_list = [ (int(x), int(y)) for entry in self.all_tag_poses for (x, y, _) in [entry["pose"]] ]
-
-                self.grid_corners = [
-                    self.find_closest(top_left, tag_center_list),
-                    self.find_closest(top_right, tag_center_list),
-                    self.find_closest(bottom_left, tag_center_list),
-                    self.find_closest(bottom_right, tag_center_list)
-                ]
-                # print("📌 보정된 꼭짓점 위치(grid_corners):", self.grid_corners)
-                self.printed_once = False
-
-            self.draw_grid_corners(frame, self.grid_corners)
-
-            # # ✅ Qt를 위한 콜백 처리
+            # 프레임만 Qt로 전달 (resize 제거!)
             if self.frame_callback:
-                resized_frame = cv2.resize(frame, (int(DISPLAY_WIDTH), int(DISPLAY_HEIGHT)))
-                self.frame_callback(resized_frame)  # Qt로 이미지 전송
-
-            # # 웹캠 프레임 시각화
-            # if self.visualize:
-            #     cv2.imshow("AprilTag Tracker", frame)
-            #     if cv2.waitKey(1) & 0xFF == ord('q'):
-            #         break
-
+                self.frame_callback(frame)  # 원본 크기 그대로 전달
 
         cap.release()
         cv2.destroyAllWindows()
@@ -308,13 +220,13 @@ class ImageWindow(QWidget):
         super().__init__()
         self.setWindowTitle("AprilTag Viewer (Qt)")
         self.image_label = QLabel()
-        # self.image_label.setScaledContents(True)
+        self.image_label.setFixedSize(int(DISPLAY_WIDTH), int(DISPLAY_HEIGHT))  # 크기 고정
         self.image_label.mousePressEvent = self.mouse_click_event
 
-        self.points = []  # 수동 선택된 4개 점
+        self.points = []
         self.manual_mode = False
         self.current_frame = None
-        self.webcam_thread = None  # webcam_thread 연결 예정
+        self.webcam_thread = None
 
         self.button = QPushButton("🖱️ p0~p3 수동 선택 모드")
         self.button1 = QPushButton("Reset")
@@ -326,7 +238,6 @@ class ImageWindow(QWidget):
         layout.addWidget(self.button)
         layout.addWidget(self.button1)
         self.setLayout(layout)
-        # self.resize(CAP_WIDTH, CAP_HEIGHT)
 
     def reset(self):
         self.webcam_thread.printed_once = True
@@ -341,17 +252,54 @@ class ImageWindow(QWidget):
 
     def update_image(self, frame):
         self.current_frame = frame.copy()
+        draw_frame = frame.copy()
+
+        # 태그, 그리드 등 시각화
+        if self.webcam_thread:
+            tag_poses = self.webcam_thread.get_all_tag_poses()
+            # 태그 사각형 및 ID 표시
+            for entry in tag_poses:
+                corners = entry.get("corners")
+                if corners:
+                    for i in range(4):
+                        cv2.line(draw_frame, corners[i], corners[(i+1)%4], (0,255,0), 2)
+                    cX, cY, _ = entry["pose"]
+                    cv2.circle(draw_frame, (cX, cY), 5, (0,0,255), -1)
+                    cv2.putText(draw_frame, f"ID:{entry['id']}", (cX+5, cY-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 4)
+                    cv2.putText(draw_frame, f"ID:{entry['id']}", (cX+5, cY-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+
+            # 그리드 그리기
+            corners = self.webcam_thread.grid_corners
+            if corners and len(corners) == 4:
+                grid_points = self.webcam_thread.generate_grid_points(corners, horizontal_divisions, vertical_divisions)
+                self.visualize_grid(draw_frame, grid_points, ROWS, COLS)
+
+        # 수동 선택 점 표시
         if self.points:
             for i, pt in enumerate(self.points):
-                cv2.circle(frame, pt, 5, (0, 0, 255), -1)
-                cv2.putText(frame, f"p{i}", (pt[0]+5, pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+                cv2.circle(draw_frame, pt, 5, (0, 0, 255), -1)
+                cv2.putText(draw_frame, f"p{i}", (pt[0]+5, pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
             if len(self.points) == 4:
-                cv2.polylines(frame, [np.array(self.points, np.int32)], isClosed=True, color=(255, 0, 0), thickness=2)
-        h, w, ch = frame.shape
+                cv2.polylines(draw_frame, [np.array(self.points, np.int32)], isClosed=True, color=(255, 0, 0), thickness=2)
+
+        h, w, ch = draw_frame.shape
         bytes_per_line = ch * w
-        q_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
+        q_image = QImage(draw_frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
         pixmap = QPixmap.fromImage(q_image)
         self.image_label.setPixmap(pixmap)
+
+    # 기존 WebcamThread의 visualize_grid 함수 복사
+    def visualize_grid(self, img, grid_points, rows, cols):
+        for row in range(rows):
+            pts = [pt for r, c, pt in grid_points if r == row]
+            for i in range(len(pts) - 1):
+                cv2.line(img, pts[i], pts[i + 1], (255, 255, 0), 2)
+        for col in range(cols):
+            pts = [pt for r, c, pt in grid_points if c == col]
+            for i in range(len(pts) - 1):
+                cv2.line(img, pts[i], pts[i + 1], (0, 255, 255), 2)
+        for row, col, pt in grid_points:
+            cv2.circle(img, pt, 2, (0, 0, 255), 2)
 
     def mouse_click_event(self, event: QMouseEvent):
         if not self.manual_mode or self.current_frame is None:
@@ -373,7 +321,6 @@ class ImageWindow(QWidget):
                 self.webcam_thread.grid_corners = [self.webcam_thread.p0, self.webcam_thread.p1, self.webcam_thread.p2, self.webcam_thread.p3]
 
         self.update_image(self.current_frame)
-
 
 
 def main():

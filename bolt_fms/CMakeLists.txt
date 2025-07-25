@@ -56,6 +56,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/py_node.py
   bolt_fms/tag_tracker_node.py
+  bolt_fms/qtmonitor_tag_tracker.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

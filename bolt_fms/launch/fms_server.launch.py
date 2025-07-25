@@ -32,6 +32,11 @@ def generate_launch_description():
             executable='traffic_manager_node',
             name='traffic_manager'
         ),
+        Node(
+            package='bolt_fms',
+            executable='tag_tracker_node.py',
+            name='tag_tracker'
+        ),
         # Node(
         #     package='bolt_fms',
         #     executable='monitoring_manager_node',
