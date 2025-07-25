@@ -1,0 +1,15 @@
+tolerances:
+  angle: 0.5
+  distance: 0.05
+angular:
+  P: 0.5
+  I: 0.0
+  D: 0.0
+  max_state: 0.5
+  min_state: -0.5
+linear:
+  P: 1.0
+  I: 0.0
+  D: 0.0
+  max_state: 0.5
+  min_state: -0.5

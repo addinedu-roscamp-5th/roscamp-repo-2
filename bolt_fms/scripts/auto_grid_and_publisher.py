@@ -16,8 +16,8 @@ CAMERA_INDEX = 2
 VISUALIZE = True
 
 # === 그리드 설정 ===
-CAP_WIDTH = 1920 /1.5
-CAP_HEIGHT = 1080/1.5
+CAP_WIDTH = 1920
+CAP_HEIGHT = 1080
 ROWS, COLS = 12, 24
 REAL_MAX_WIDTH = 1.91
 REAL_MAX_HEIGHT = 0.91
@@ -176,6 +176,12 @@ class WebcamThread(threading.Thread):
         tag_centers = []              # [[x, y], ...]
         tag_id_to_center = {}         # {id: (x, y)}
         center_to_tag_id = {}         # {(x, y): id}
+
+
+        # 시각화 옵션(visualize)이 켜져 있을 경우, 사용자가 창 크기를 조절할 수 있도록 WINDOW_NORMAL 플래그를 설정하여 미리 창을 생성합니다.
+        # 이 설정이 없으면 cv2.imshow()는 고정 크기(WINDOW_AUTOSIZE)의 창을 생성합니다.
+        if self.visualize:
+            cv2.namedWindow("AprilTag Tracker", cv2.WINDOW_NORMAL)
 
 
         while self.running:
