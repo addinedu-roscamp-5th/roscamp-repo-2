@@ -4,17 +4,46 @@ name: my_bridge
 from_domain: 0
 
 topics:
-  robot4/camera_pose:
+
+# camera_pose topics ----------------------------
+  robot1/camera_pose:
     type: geometry_msgs/msg/PoseStamped
-    # from_domain: 0
+    from_domain: 0
     to_domain: 151
     remap: camera_pose
 
   robot2/camera_pose:
     type: geometry_msgs/msg/PoseStamped
-    # from_domain: 0
+    from_domain: 0
     to_domain: 33
     remap: camera_pose
+
+  robot3/camera_pose:
+    type: geometry_msgs/msg/PoseStamped
+    # from_domain: 0
+    # to_domain: 33
+    remap: camera_pose
+
+
+# target_pose topics ----------------------------
+
+  robot1/target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    # from_domain: 0
+    to_domain: 151
+    remap: target_pose
+
+  robot2/target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    # from_domain: 0
+    to_domain: 33
+    remap: target_pose
+
+  robot3/target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    # from_domain: 0
+    # to_domain: 33
+    remap: target_pose
 
   
 

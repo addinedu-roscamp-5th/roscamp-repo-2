@@ -9,8 +9,9 @@ from pupil_apriltags import Detector
 import cv2
 import numpy as np
 
-from PySide6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QTextEdit, QLineEdit
 from PySide6.QtGui import QImage, QPixmap, QMouseEvent
+from PySide6.QtCore import QTimer
 
 import sys
 print("---------------------------------------------------------------")
@@ -26,15 +27,15 @@ CAMERA_INDEX = 3
 VISUALIZE = True
 
 # === 그리드 설정 ===
-CAP_RATIO = 0.75
+CAP_RATIO = 0.6
 
-CAP_WIDTH = 1920 * CAP_RATIO
-CAP_HEIGHT = 1080 * CAP_RATIO
+CAP_WIDTH = int(1920 * CAP_RATIO)
+CAP_HEIGHT = int(1080 * CAP_RATIO)
 
-RESIZE_RATIO = 1
-
-DISPLAY_WIDTH = CAP_WIDTH * RESIZE_RATIO
-DISPLAY_HEIGHT = CAP_HEIGHT * RESIZE_RATIO
+TOP_LEFT     = (0, 0)
+TOP_RIGHT    = (CAP_WIDTH - 1, 0)
+BOT_LEFT     = (0, CAP_HEIGHT - 1)
+BOT_RIGHT    = (CAP_WIDTH - 1, CAP_HEIGHT - 1)
 
 ROWS, COLS = 5, 10
 REAL_MAX_WIDTH = 1.91
@@ -76,7 +77,27 @@ class PoseMultiPublisher(Node):
         msg.pose.orientation.w = cos(yaw / 2.0)
 
         self.pose_publishers[robot_id].publish(msg)
-        self.get_logger().info(f"📤 /robot{robot_id}/camera_pose → x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
+        self.get_logger().info(f"📤 /robot{robot_id}/camera_pose → x={x:.3f}, y={y:.3f}, yaw={yaw:.3f}")
+
+class TargetPosePublisher(Node):
+    def __init__(self, robot_id, tag_id):
+        super().__init__(f'robot{robot_id}_target_publisher')
+        self.robot_id = robot_id
+        self.tag_id = tag_id
+        self.publisher = self.create_publisher(PoseStamped, f'/robot{robot_id}/target_pose', 10)
+
+    def publish_target_pose(self, x, y, yaw):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.pose.position.x = float(x)
+        msg.pose.position.y = float(y)
+        msg.pose.position.z = 0.0
+        msg.pose.orientation.z = sin(yaw / 2.0)
+        msg.pose.orientation.w = cos(yaw / 2.0)
+
+        self.publisher.publish(msg)
+        self.get_logger().info(f"📤 /robot{self.robot_id}/target_pose → x={x:.3f}, y={y:.3f}, yaw={yaw:.3f}")
 
 # === 웹캠 추적 스레드 ===
 class WebcamThread(threading.Thread):
@@ -95,15 +116,15 @@ class WebcamThread(threading.Thread):
         self.p3 = None
         self.printed_once = True
         self.grid_corners = None
-        self.tag_center_set = set()
         self.all_tag_poses = []
 
     # 보간 함수
     def interpolate(self, p1, p2, t):
         return (int(p1[0] + t * (p2[0] - p1[0])), int(p1[1] + t * (p2[1] - p1[1])))
 
-    def generate_grid_points(self, pts, h_div, v_div):
-        self.p0, self.p1, self.p2, self.p3 = pts
+    def generate_grid_points(self, h_div, v_div):
+        if self.grid_corners is None or len(self.grid_corners) != 4:
+            return []
 
         lefts = [self.interpolate(self.p0, self.p2, i / h_div) for i in range(h_div + 1)]
         rights = [self.interpolate(self.p1, self.p3, i / h_div) for i in range(h_div + 1)]
@@ -139,14 +160,15 @@ class WebcamThread(threading.Thread):
 
 
     # 📍 각 꼭짓점에서 가장 가까운 실제 에이프릴 태그 중심 좌표로 snap
-    def find_closest(self, center, candidates):
+    def find_closest(self, center):
         min_dist = float('inf')
         closest = center
-        for c in candidates:
-            dist = np.linalg.norm(np.array(c) - np.array(center))
+        for c in self.all_tag_poses:
+            c_pt = c["pose"][:2]  # (x, y)만 사용
+            dist = np.linalg.norm(np.array(c_pt) - np.array(center))
             if dist < min_dist:
                 min_dist = dist
-                closest = c
+                closest = c_pt
         return tuple(closest)
     
     def get_tag_pose(self, tag_id):
@@ -157,9 +179,17 @@ class WebcamThread(threading.Thread):
         with self.result_lock:
             return list(self.all_tag_poses)  # 사본 반환
 
-    def draw_grid_corners(self, frame, corners):
-        if corners:
-            grid_points = self.generate_grid_points(corners, horizontal_divisions, vertical_divisions)
+    def draw_grid_corners(self, frame):
+        # p0~p3가 None이면 새로 할당
+        if None in (self.p0, self.p1, self.p2, self.p3):
+            self.p0 = self.find_closest(TOP_LEFT)
+            self.p1 = self.find_closest(TOP_RIGHT)
+            self.p2 = self.find_closest(BOT_LEFT)
+            self.p3 = self.find_closest(BOT_RIGHT)
+
+        self.grid_corners = [self.p0, self.p1, self.p2, self.p3]
+        if self.grid_corners:
+            grid_points = self.generate_grid_points(horizontal_divisions, vertical_divisions)
             self.visualize_grid(frame, grid_points, ROWS, COLS)
 
 
@@ -203,7 +233,10 @@ class WebcamThread(threading.Thread):
             with self.result_lock:
                 self.all_tag_poses = current_tag_poses_list
 
-            # 프레임만 Qt로 전달 (resize 제거!)
+            if self.all_tag_poses:
+                if self.visualize:
+                    self.draw_grid_corners(frame)
+
             if self.frame_callback:
                 self.frame_callback(frame)  # 원본 크기 그대로 전달
 
@@ -215,78 +248,183 @@ class WebcamThread(threading.Thread):
         self.running = False
 
 
+from PySide6.QtWidgets import (
+    QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView
+)
+from PySide6.QtCore import Qt
+
 class ImageWindow(QWidget):
-    def __init__(self):
+    def __init__(self, robot_tag_map=None, webcam_thread=None):
         super().__init__()
         self.setWindowTitle("AprilTag Viewer (Qt)")
-        self.image_label = QLabel()
-        self.image_label.setFixedSize(int(DISPLAY_WIDTH), int(DISPLAY_HEIGHT))  # 크기 고정
-        self.image_label.mousePressEvent = self.mouse_click_event
-
-        self.points = []
-        self.manual_mode = False
+        self.robot_tag_map = robot_tag_map or {}
+        self.webcam_thread = webcam_thread
         self.current_frame = None
-        self.webcam_thread = None
+        self.draw_grid_once = True
+        # 타이머 설정 (0.5초 간격)
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_selected_pose)
+        self.update_timer.start(500)
+        self.selected_row = None  # 선택된 행 번호
 
-        self.button = QPushButton("🖱️ p0~p3 수동 선택 모드")
-        self.button1 = QPushButton("Reset")
-        self.button.clicked.connect(self.enable_manual_mode)
-        self.button1.clicked.connect(self.reset)
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.image_label)
-        layout.addWidget(self.button)
-        layout.addWidget(self.button1)
-        self.setLayout(layout)
+        # 이미지 및 Reset 버튼
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(CAP_WIDTH, CAP_HEIGHT)
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.clicked.connect(self.reset_grid_corners)
 
-    def reset(self):
-        self.webcam_thread.printed_once = True
-        self.webcam_thread.grid_corners = []
+        # 하단: 테이블과 위치 출력창
+        self.robot_table = QTableWidget()
+        self.robot_table.setColumnCount(2)
+        self.robot_table.setHorizontalHeaderLabels(["Robot ID", "Tag ID"])
+        self.robot_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.robot_table.verticalHeader().setVisible(False)
+        self.robot_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.robot_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.robot_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.robot_table.cellClicked.connect(self.on_table_click)
 
-    def enable_manual_mode(self):
-        self.points = []
-        self.manual_mode = True
+        self.pose_label = QLabel("🛰️ 위치 정보: 없음")
+        self.pose_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.pose_label.setStyleSheet("font-size: 14px; color: #003366")
+
+        # 전체 레이아웃 구성
+        main_layout = QVBoxLayout()
+
+        top_layout = QHBoxLayout()
+        top_layout.addWidget(self.image_label)
+        top_layout.addWidget(self.robot_table)
+        top_layout.addWidget(self.pose_label)
+        
+
+        bottom_layout = QVBoxLayout()
+        bottom_layout.addWidget(self.reset_button)
+
+        # 📍 목표 입력칸
+        self.goal_input_x = QLineEdit()
+        self.goal_input_y = QLineEdit()
+        self.goal_input_yaw = QLineEdit()
+        self.goal_input_x.setPlaceholderText("목표 x (m)")
+        self.goal_input_y.setPlaceholderText("목표 y (m)")
+        self.goal_input_yaw.setPlaceholderText("yaw (-180~180°)")
+
+
+        # 📤 목표 발행 버튼
+        self.goal_button = QPushButton("📤 목표 발행")
+        self.goal_button.clicked.connect(self.publish_target_pose)
+
+        # 수평 배치
+        goal_input_layout = QHBoxLayout()
+        goal_input_layout.addWidget(self.goal_input_x)
+        goal_input_layout.addWidget(self.goal_input_y)
+        goal_input_layout.addWidget(self.goal_input_yaw)
+        goal_input_layout.addWidget(self.goal_button)
+
+    
+        # 배치 추가
+        bottom_layout.addLayout(goal_input_layout)
+
+        # 퍼블리셔 캐시 {robot_id: TargetPosePublisher}
+        self.target_publishers = {}
+
+
+        self.populate_robot_table()
+
+        main_layout.addLayout(top_layout)
+        main_layout.addLayout(bottom_layout)
+        self.setLayout(main_layout)
 
     def set_webcam_thread(self, thread):
         self.webcam_thread = thread
 
+    def reset_grid_corners(self):
+        if self.webcam_thread:
+            self.webcam_thread.p0 = None
+            self.webcam_thread.p1 = None
+            self.webcam_thread.p2 = None
+            self.webcam_thread.p3 = None
+            self.webcam_thread.grid_corners = None
+        self.draw_grid_once = True
+        if self.current_frame is not None:
+            self.update_image(self.current_frame)
+
+    def populate_robot_table(self):
+        self.robot_table.setRowCount(len(self.robot_tag_map))
+        for row, (rid, tid) in enumerate(self.robot_tag_map.items()):
+            self.robot_table.setItem(row, 0, QTableWidgetItem(str(rid)))
+            self.robot_table.setItem(row, 1, QTableWidgetItem(str(tid)))
+
+    def on_table_click(self, row, column):
+        self.selected_row = row
+        self.update_selected_pose()  # 즉시 표시
+
+    def update_selected_pose(self):
+        if self.selected_row is None:
+            return
+        robot_id = int(self.robot_table.item(self.selected_row, 0).text())
+        tag_id = self.robot_tag_map.get(robot_id)
+        pose = _get_transed_pose_for_tag(self.webcam_thread, tag_id)
+        if pose is None:
+            self.pose_label.setText(f"🛰️ 위치 정보: (로봇 {robot_id}, 태그 {tag_id}) ➤ 감지되지 않음")
+        else:
+            x, y, yaw = pose
+            deg = np.degrees(yaw)
+            self.pose_label.setText(
+                f"🛰️ 위치 정보: 로봇 {robot_id}, 태그 {tag_id} ➤ x={x:.2f}, y={y:.2f}, yaw={yaw:.2f} rad ({deg:.1f}°)"
+            )
+    
     def update_image(self, frame):
         self.current_frame = frame.copy()
-        draw_frame = frame.copy()
-
-        # 태그, 그리드 등 시각화
         if self.webcam_thread:
             tag_poses = self.webcam_thread.get_all_tag_poses()
-            # 태그 사각형 및 ID 표시
             for entry in tag_poses:
                 corners = entry.get("corners")
                 if corners:
                     for i in range(4):
-                        cv2.line(draw_frame, corners[i], corners[(i+1)%4], (0,255,0), 2)
+                        cv2.line(self.current_frame, corners[i], corners[(i+1)%4], (0,255,0), 2)
                     cX, cY, _ = entry["pose"]
-                    cv2.circle(draw_frame, (cX, cY), 5, (0,0,255), -1)
-                    cv2.putText(draw_frame, f"ID:{entry['id']}", (cX+5, cY-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 4)
-                    cv2.putText(draw_frame, f"ID:{entry['id']}", (cX+5, cY-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+                    cv2.circle(self.current_frame, (cX, cY), 5, (0,0,255), -1)
+                    cv2.putText(self.current_frame, f"ID:{entry['id']}", (cX+5, cY-5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 3)
+                    cv2.putText(self.current_frame, f"ID:{entry['id']}", (cX+5, cY-5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+            if self.draw_grid_once:
+                self.webcam_thread.draw_grid_corners(self.current_frame)
 
-            # 그리드 그리기
-            corners = self.webcam_thread.grid_corners
-            if corners and len(corners) == 4:
-                grid_points = self.webcam_thread.generate_grid_points(corners, horizontal_divisions, vertical_divisions)
-                self.visualize_grid(draw_frame, grid_points, ROWS, COLS)
-
-        # 수동 선택 점 표시
-        if self.points:
-            for i, pt in enumerate(self.points):
-                cv2.circle(draw_frame, pt, 5, (0, 0, 255), -1)
-                cv2.putText(draw_frame, f"p{i}", (pt[0]+5, pt[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
-            if len(self.points) == 4:
-                cv2.polylines(draw_frame, [np.array(self.points, np.int32)], isClosed=True, color=(255, 0, 0), thickness=2)
-
-        h, w, ch = draw_frame.shape
+        h, w, ch = self.current_frame.shape
         bytes_per_line = ch * w
-        q_image = QImage(draw_frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
+        q_image = QImage(self.current_frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
         pixmap = QPixmap.fromImage(q_image)
         self.image_label.setPixmap(pixmap)
+
+    def publish_target_pose(self):
+        if self.selected_row is None:
+            print("❌ 로봇을 선택하세요.")
+            return
+
+        try:
+            x = float(self.goal_input_x.text())
+            y = float(self.goal_input_y.text())
+            yaw_deg = float(self.goal_input_yaw.text())
+        except ValueError:
+            print("❌ x, y, yaw 값을 모두 숫자로 입력하세요.")
+            return
+
+        yaw = np.radians(yaw_deg)
+
+        robot_id = int(self.robot_table.item(self.selected_row, 0).text())
+        tag_id = self.robot_tag_map.get(robot_id)
+
+        # 퍼블리셔가 없으면 생성
+        if robot_id not in self.target_publishers:
+            self.target_publishers[robot_id] = TargetPosePublisher(robot_id, tag_id)
+        
+        self.target_publishers[robot_id].publish_target_pose(x, y, yaw)
+        print(f"✅ 목표 위치 발행됨 → /robot{robot_id}/target_pose : x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
+
+
 
     # 기존 WebcamThread의 visualize_grid 함수 복사
     def visualize_grid(self, img, grid_points, rows, cols):
@@ -301,32 +439,19 @@ class ImageWindow(QWidget):
         for row, col, pt in grid_points:
             cv2.circle(img, pt, 2, (0, 0, 255), 2)
 
-    def mouse_click_event(self, event: QMouseEvent):
-        if not self.manual_mode or self.current_frame is None:
-            return
-
-        x = int(event.position().x())
-        y = int(event.position().y())
-
-        if len(self.points) < 4:
-            self.points.append((x, y))
-
-        if len(self.points) == 4:
-            self.manual_mode = False
-            if self.webcam_thread:
-                self.webcam_thread.p0 = self.points[0]
-                self.webcam_thread.p1 = self.points[1]
-                self.webcam_thread.p2 = self.points[2]
-                self.webcam_thread.p3 = self.points[3]
-                self.webcam_thread.grid_corners = [self.webcam_thread.p0, self.webcam_thread.p1, self.webcam_thread.p2, self.webcam_thread.p3]
-
-        self.update_image(self.current_frame)
+    
 
 
 def main():
+    # 로봇 ID와 에이프릴태그 ID 매핑
+    robot_tag_map = {
+        1: 2,   # 로봇 1 → 태그 2
+        2: 4,   # 로봇 2 → 태그 4
+        # 필요시 추가
+    }
 
     app = QApplication(sys.argv)
-    image_window = ImageWindow()
+    image_window = ImageWindow(robot_tag_map=robot_tag_map)
     image_window.show()
 
     # 스레드 실행 시 콜백 전달
@@ -337,7 +462,8 @@ def main():
     
     rclpy.init(args=None)
 
-    robot_ids = [2,4]
+
+    robot_ids = list(robot_tag_map.keys())
 
     # pose 함수 매핑 생성
     def make_pose_func(tag_id):
