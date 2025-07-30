@@ -18,11 +18,11 @@ topics:
     to_domain: 33
     remap: camera_pose
 
-  robot3/camera_pose:
-    type: geometry_msgs/msg/PoseStamped
-    # from_domain: 0
-    # to_domain: 33
-    remap: camera_pose
+  # robot3/camera_pose:
+  #   type: geometry_msgs/msg/PoseStamped
+  #   # from_domain: 0
+  #   # to_domain: 33
+  #   remap: camera_pose
 
 
 # target_pose topics ----------------------------

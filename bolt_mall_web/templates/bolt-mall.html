@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/mall.css">
+    <script defer src="/static/js/mall.js"></script>
+    <script src="/static/js/update-cart-count.js"></script>
+    <title>볼트몰</title>
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="header">
+        <div class="header-top">
+            🚀 신규 회원 가입 시 최대 50% 할인 쿠폰 증정! 지금 바로 가입하세요!
+        </div>
+        <div class="header-main">
+            <div class="container">
+                <div class="header-content">
+                    <div class="logo" style="display: flex; position: relative; align-items: center;">
+                        <a href="/" style="display: flex; align-items: center; text-decoration: none;">
+                            <img src="/static/images/bolt-logo-removebg-preview.png" alt="BOLT 로고" style="height: 60px;">
+                            <span style="font-size: 50px; font-weight: bold; color: #0d7fe1; margin-left: 10px;">BOLT Mall</span>
+                        </a>
+                    </div>
+                    <div class="search-bar">
+                        <input type="text" class="search-input" placeholder="찾고 싶은 상품을 검색해보세요!">
+                        <button class="search-btn">🔍</button>
+                    </div>
+                    <div class="header-actions">
+                        <a href="#" class="action-btn">
+                            👤<br>마이페이지
+                        </a>
+                        <a class="action-btn" href="/cart" style="position: relative;">
+                            🛒<br>장바구니
+                            <span class="cart-count">6</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 네비게이션 -->
+    <nav class="nav">
+        <div class="container">
+            <div class="nav-items">
+                <a href="#" class="nav-item active">전체</a>
+                <a href="#" class="nav-item">노트북</a>
+                <a href="#" class="nav-item">스마트폰</a>
+                <a href="#" class="nav-item">태블릿</a>
+                <a href="#" class="nav-item">액세서리</a>
+                <a href="#" class="nav-item">가전제품</a>
+                <a href="#" class="nav-item">패션</a>
+                <a href="#" class="nav-item">뷰티</a>
+                <a href="#" class="nav-item">홈&리빙</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 메인 배너 -->
+    <section class="main-banner">
+        <div class="container">
+            <h1 class="banner-title">최신 노트북 특가 세일</h1>
+            <p class="banner-subtitle">AMD Ryzen™ AI 프로세서로 더욱 빨라진 성능을 경험하세요</p>
+        </div>
+    </section>
+
+    <!-- 메인 콘텐츠 -->
+    <div class="container">
+        <div class="main-content">
+            <!-- 사이드바 -->
+            <aside class="sidebar">
+                <h3>필터</h3>
+                
+                <div class="filter-group">
+                    <div class="filter-title">브랜드</div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="samsung">
+                        <label for="samsung">삼성</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="lg">
+                        <label for="lg">LG</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="asus">
+                        <label for="asus">ASUS</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="lenovo">
+                        <label for="lenovo">레노버</label>
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <div class="filter-title">가격대</div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="under50">
+                        <label for="under50">50만원 이하</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="50to100">
+                        <label for="50to100">50-100만원</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="100to200">
+                        <label for="100to200">100-200만원</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="over200">
+                        <label for="over200">200만원 이상</label>
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <div class="filter-title">화면 크기</div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="13inch">
+                        <label for="13inch">13인치</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="14inch">
+                        <label for="14inch">14인치</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="15inch">
+                        <label for="15inch">15인치</label>
+                    </div>
+                    <div class="filter-item">
+                        <input type="checkbox" id="17inch">
+                        <label for="17inch">17인치</label>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- 상품 목록 -->
+            <main class="products-section">
+                <h2 class="section-title">노트북 인기 상품</h2>
+                <div class="products-grid">
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">삼성 갤럭시북4 Pro 16인치 i7 RTX4060</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">2,199,000원</span>
+                                1,799,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★★</span>
+                                <span class="rating-text">(4.8) 리뷰 1,523개</span>
+                            </div>
+                            <div class="product-delivery">⚡ 로켓배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">LG 그램 15인치 초경량 노트북 i5</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">1,599,000원</span>
+                                1,299,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★☆</span>
+                                <span class="rating-text">(4.6) 리뷰 892개</span>
+                            </div>
+                            <div class="product-delivery">⚡ 로켓배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">ASUS 비보북 14 AMD Ryzen7 게이밍</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">1,299,000원</span>
+                                989,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★☆</span>
+                                <span class="rating-text">(4.5) 리뷰 634개</span>
+                            </div>
+                            <div class="product-delivery">🚚 일반배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">레노버 아이디어패드 Slim 15 i7</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">1,199,000원</span>
+                                899,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★☆</span>
+                                <span class="rating-text">(4.4) 리뷰 456개</span>
+                            </div>
+                            <div class="product-delivery">⚡ 로켓배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">HP 파빌리온 14 인텔 i5 학생용</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">899,000원</span>
+                                699,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★☆</span>
+                                <span class="rating-text">(4.3) 리뷰 321개</span>
+                            </div>
+                            <div class="product-delivery">🚚 일반배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">MSI 크리에이터 15 RTX4070 크리에이터</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">2,799,000원</span>
+                                2,399,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★★</span>
+                                <span class="rating-text">(4.7) 리뷰 189개</span>
+                            </div>
+                            <div class="product-delivery">⚡ 로켓배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">Apple MacBook Air M2 13인치 8GB</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">1,690,000원</span>
+                                1,490,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★★</span>
+                                <span class="rating-text">(4.9) 리뷰 2,345개</span>
+                            </div>
+                            <div class="product-delivery">⚡ 로켓배송</div>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-image">💻</div>
+                        <div class="product-info">
+                            <h3 class="product-title">Dell XPS 13 Plus 4K OLED 터치스크린</h3>
+                            <div class="product-price">
+                                <span class="product-original-price">2,299,000원</span>
+                                1,999,000원
+                            </div>
+                            <div class="product-rating">
+                                <span class="stars">★★★★☆</span>
+                                <span class="rating-text">(4.6) 리뷰 412개</span>
+                            </div>
+                            <div class="product-delivery">🚚 일반배송</div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- 푸터 -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>고객센터</h4>
+                    <ul>
+                        <li><a href="#">1588-1234</a></li>
+                        <li><a href="#">평일 09:00~18:00</a></li>
+                        <li><a href="#">주말, 공휴일 휴무</a></li>
+                        <li><a href="#">자주 묻는 질문</a></li>
+                        <li><a href="#">1:1 문의</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>회사소개</h4>
+                    <ul>
+                        <li><a href="#">회사소개</a></li>
+                        <li><a href="#">채용정보</a></li>
+                        <li><a href="#">투자정보</a></li>
+                        <li><a href="#">공지사항</a></li>
+                        <li><a href="#">이용약관</a></li>
+                        <li><a href="#">개인정보처리방침</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>서비스</h4>
+                    <ul>
+                        <li><a href="#">로켓배송</a></li>
+                        <li><a href="#">로켓프레시</a></li>
+                        <li><a href="#">로켓직구</a></li>
+                        <li><a href="#">골드박스</a></li>
+                        <li><a href="#">정기배송</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>혜택</h4>
+                    <ul>
+                        <li><a href="#">쿠폰/적립금</a></li>
+                        <li><a href="#">멤버십</a></li>
+                        <li><a href="#">친구초대</a></li>
+                        <li><a href="#">이벤트</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 ShopMall Corp. All rights reserved. | 대표이사: 홍길동 | 사업자등록번호: 123-45-67890</p>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>

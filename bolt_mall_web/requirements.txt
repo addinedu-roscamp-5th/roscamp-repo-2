@@ -1,0 +1,7 @@
+fastapi[standard]
+uvicorn[standard]
+
+pymysql
+sqlalchemy
+databases
+aiomysql

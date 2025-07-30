@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <link href="/static/css/cart.css" rel="stylesheet" />
+    <script defer="" src="/static/js/cart.js"></script>
+    <title>볼트몰 - 장바구니</title>
+    <style>
+    </style>
+</head>
+
+<body>
+    <!-- 헤더 -->
+    <header class="header">
+        <div class="header-top">
+            🚀 신규 회원 가입 시 최대 50% 할인 쿠폰 증정! 지금 바로 가입하세요!
+        </div>
+        <div class="header-main">
+            <div class="container">
+                <div class="header-content">
+                    <div class="logo" style="display: flex; position: relative; align-items: center;">
+                        <a href="/" style="display: flex; align-items: center; text-decoration: none;">
+                            <img alt="BOLT 로고" src="/static/images/bolt-logo-removebg-preview.png"
+                                style="height: 60px;" />
+                            <span style="font-size: 50px; font-weight: bold; color: #0d7fe1; margin-left: 10px;">BOLT
+                                Mall</span>
+                        </a>
+                    </div>
+                    <div class="search-bar">
+                        <input class="search-input" placeholder="찾고 싶은 상품을 검색해보세요!" type="text" />
+                        <button class="search-btn">🔍</button>
+                    </div>
+                    <div class="header-actions">
+                        <a class="action-btn" href="#">
+                            👤<br />마이페이지
+                        </a>
+                        <a class="action-btn" href="/cart" style="position: relative;">
+                            🛒<br />장바구니
+                            <span class="cart-count">3</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <!-- 네비게이션 -->
+    <nav class="nav">
+        <div class="container">
+            <div class="nav-items">
+                <a class="nav-item" href="#">전체</a>
+                <a class="nav-item" href="#">노트북</a>
+                <a class="nav-item" href="#">스마트폰</a>
+                <a class="nav-item" href="#">태블릿</a>
+                <a class="nav-item" href="#">액세서리</a>
+                <a class="nav-item" href="#">가전제품</a>
+                <a class="nav-item" href="#">패션</a>
+                <a class="nav-item" href="#">뷰티</a>
+                <a class="nav-item" href="#">홈&amp;리빙</a>
+            </div>
+        </div>
+    </nav>
+    <!-- 장바구니 헤더 -->
+    <section class="cart-header">
+        <div class="container">
+            <h1 class="page-title">🛒 장바구니</h1>
+            <p class="page-subtitle">선택한 상품들을 확인하고 주문을 완료하세요</p>
+        </div>
+    </section>
+    <!-- 장바구니 콘텐츠 -->
+    <div class="container">
+        <div class="cart-content">
+            <!-- 장바구니 아이템 -->
+            <div class="cart-items">
+                <div class="select-all">
+                    <input checked="" class="select-all-checkbox" id="select-all" type="checkbox" />
+                    <label class="select-all-label" for="select-all">전체선택 (3개)</label>
+                </div>
+                <div class="cart-item" data-id="1">
+                    <input checked="" class="item-checkbox" type="checkbox" />
+                    <div class="item-image" style="width: 80px; height: 80px;">
+                        <img src="/static/images/products/chrome-hearts.png" alt="크롬하츠 포나인즈 안경테"
+                            style="width: 100%; height: 100%; object-fit: contain;" />
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">크롬하츠 포나인즈 안경테</h3>
+                        <div class="item-options">여성용 악세서리</div>
+                        <div class="item-delivery">⚡ 로켓배송</div>
+                        <div class="item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(this, -1)">-</button>
+                            <input class="quantity-input" max="99" min="1" type="number" value="1" />
+                            <button class="quantity-btn" onclick="updateQuantity(this, 1)">+</button>
+                        </div>
+                        <div class="item-actions">
+                            <a class="action-link" href="#">찜하기</a>
+                            <a class="action-link" href="#">비교함</a>
+                            <a class="action-link remove-btn" href="#" onclick="removeItem(this)">삭제</a>
+                        </div>
+                    </div>
+                    <div class="item-price">
+                        <div class="current-price">1,799,000원</div>
+                        <div class="original-price">2,199,000원</div>
+                    </div>
+                    <div class="item-1"></div>
+                </div>
+                <div class="cart-item" data-id="2">
+                    <input checked="" class="item-checkbox" type="checkbox" />
+                    <div class="item-image" style="width: 80px; height: 80px;">
+                        <img src="/static/images/products/sunglasses.png" alt="젠틀몬스터 반도네온 선글라스"
+                            style="width: 100%; height: 100%; object-fit: contain;" />
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">젠틀몬스터 반도네온 선글라스</h3>
+                        <div class="item-options">여성용 악세서리 | S, M, L</div>
+                        <div class="item-delivery">⚡ 로켓배송</div>
+                        <div class="item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(this, -1)">-</button>
+                            <input class="quantity-input" max="99" min="1" type="number" value="1" />
+                            <button class="quantity-btn" onclick="updateQuantity(this, 1)">+</button>
+                        </div>
+                        <div class="item-actions">
+                            <a class="action-link" href="#">찜하기</a>
+                            <a class="action-link" href="#">비교함</a>
+                            <a class="action-link remove-btn" href="#" onclick="removeItem(this)">삭제</a>
+                        </div>
+                    </div>
+                    <div class="item-price">
+                        <div class="current-price">1,299,000원</div>
+                        <div class="original-price">1,599,000원</div>
+                    </div>
+                </div>
+                <div class="cart-item" data-id="3">
+                    <input checked="" class="item-checkbox" type="checkbox" />
+                    <div class="item-image" style="width: 80px; height: 80px;">
+                        <img src="/static/images/products/MacBook.png" alt="애플 맥북 프로"
+                            style="width: 100%; height: 100%; object-fit: contain;" />
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">애플 맥북 프로</h3>
+                        <div class="item-options">M3 | 16GB RAM | 512GB SSD</div>
+                        <div class="item-delivery">⚡ 로켓배송</div>
+                        <div class="item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(this, -1)">-</button>
+                            <input class="quantity-input" max="99" min="1" type="number" value="1" />
+                            <button class="quantity-btn" onclick="updateQuantity(this, 1)">+</button>
+                        </div>
+                        <div class="item-actions">
+                            <a class="action-link" href="#">찜하기</a>
+                            <a class="action-link remove-btn" href="#" onclick="removeItem(this)">삭제</a>
+                        </div>
+                    </div>
+                    <div class="item-price">
+                        <div class="current-price">3,200,000원</div>
+                        <div class="original-price">3,490,000원</div>
+                    </div>
+                </div>
+                <div class="cart-item" data-id="4">
+                    <input checked="" class="item-checkbox" type="checkbox" />
+                    <div class="item-image" style="width: 80px; height: 80px;">
+                        <img src="/static/images/products/iphone16pro.png" alt="아이폰 16 프로"
+                            style="width: 100%; height: 100%; object-fit: contain;" />
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">아이폰 16 프로</h3>
+                        <div class="item-options">256GB | 블랙 티타늄</div>
+                        <div class="item-delivery">⚡ 로켓배송</div>
+                        <div class="item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(this, -1)">-</button>
+                            <input class="quantity-input" max="99" min="1" type="number" value="1" />
+                            <button class="quantity-btn" onclick="updateQuantity(this, 1)">+</button>
+                        </div>
+                        <div class="item-actions">
+                            <a class="action-link" href="#">찜하기</a>
+                            <a class="action-link remove-btn" href="#" onclick="removeItem(this)">삭제</a>
+                        </div>
+                    </div>
+                    <div class="item-price">
+                        <div class="current-price">1,990,000원</div>
+                        <div class="original-price">2,100,000원</div>
+                    </div>
+                </div>
+                <div class="cart-item" data-id="5">
+                    <input checked="" class="item-checkbox" type="checkbox" />
+                    <div class="item-image" style="width: 80px; height: 80px;">
+                        <img src="/static/images/products/eraser.png" alt="구찌 지우개 3개입 박스"
+                            style="width: 100%; height: 100%; object-fit: contain;" />
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">구찌 지우개 3개입 박스</h3>
+                        <div class="item-options">사각 | 학생용 대형</div>
+                        <div class="item-delivery">🚚 일반배송</div>
+                        <div class="item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(this, -1)">-</button>
+                            <input class="quantity-input" max="99" min="1" type="number" value="1" />
+                            <button class="quantity-btn" onclick="updateQuantity(this, 1)">+</button>
+                        </div>
+                        <div class="item-actions">
+                            <a class="action-link" href="#">찜하기</a>
+                            <a class="action-link remove-btn" href="#" onclick="removeItem(this)">삭제</a>
+                        </div>
+                    </div>
+                    <div class="item-price">
+                        <div class="current-price">400,000원</div>
+                        <div class="original-price">420,000원</div>
+                    </div>
+                </div>
+                <div class="cart-item" data-id="6">
+                    <input checked="" class="item-checkbox" type="checkbox" />
+                    <div class="item-image" style="width: 80px; height: 80px;">
+                        <img src="/static/images/products/pen.png" alt="까렌 디럭스 만년필"
+                            style="width: 100%; height: 100%; object-fit: contain;" />
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">까렌 디럭스 만년필</h3>
+                        <div class="item-options">0.7mm | 블랙잉크</div>
+                        <div class="item-delivery">🚚 일반배송</div>
+                        <div class="item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(this, -1)">-</button>
+                            <input class="quantity-input" max="99" min="1" type="number" value="1" />
+                            <button class="quantity-btn" onclick="updateQuantity(this, 1)">+</button>
+                        </div>
+                        <div class="item-actions">
+                            <a class="action-link" href="#">찜하기</a>
+                            <a class="action-link remove-btn" href="#" onclick="removeItem(this)">삭제</a>
+                        </div>
+                    </div>
+                    <div class="item-price">
+                        <div class="current-price">814,000원</div>
+                        <div class="original-price">875,000원</div>
+                    </div>
+                </div>
+            </div>
+            <!-- 주문 요약 -->
+            <div class="cart-summary">
+                <h2 class="section-title">주문 요약</h2>
+
+                <div class="summary-row">
+                    <span class="summary-label">상품금액</span>
+                    <span class="summary-value" id="total-price">4,206,000원</span>
+                </div>
+
+                <div class="summary-row">
+                    <span class="summary-label">할인금액</span>
+                    <span class="summary-value discount-value" id="discount-price">-549,000원</span>
+                </div>
+
+                <div class="summary-row">
+                    <span class="summary-label">배송비</span>
+                    <span class="summary-value">무료</span>
+                </div>
+
+                <div class="summary-row">
+                    <span class="summary-label">최종 결제금액</span>
+                    <span class="summary-value" id="final-price">3,657,000원</span>
+                </div>
+                <button class="checkout-btn" onclick="proceedToCheckout()">
+                    💳 주문하기 (총 금액)
+                </button>
+
+
+
+                <a class="continue-shopping" href="#">
+                    ← 쇼핑 계속하기
+                </a>
+                <div
+                    style="margin-top: 20px; padding: 16px; background: #f8f9ff; border-radius: 8px; border-left: 4px solid #4285f4;">
+                    <div style="font-size: 14px; color: #4285f4; font-weight: 500; margin-bottom: 8px;">
+                        💡 혜택 정보
+                    </div>
+                    <div style="font-size: 12px; color: #666; line-height: 1.4;">
+                        • 로켓배송 상품으로 내일 도착 예정<br />
+                        • 첫 구매 시 추가 5% 할인 쿠폰 적용 가능<br />
+                        • 100만원 이상 구매 시 무이자 할부 가능
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 푸터 -->
+    <footer style="background: #333; color: white; padding: 40px 0 20px; margin-top: 60px;">
+        <div class="container">
+            <div
+                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 30px; margin-bottom: 30px;">
+                <div>
+                    <h4 style="margin-bottom: 16px; color: #4285f4;">고객센터</h4>
+                    <ul style="list-style: none;">
+                        <li style="margin-bottom: 8px;"><a href="#"
+                                style="color: #ccc; text-decoration: none;">1588-1234</a></li>
+                        <li style="margin-bottom: 8px;"><a href="#" style="color: #ccc; text-decoration: none;">평일
+                                09:00~18:00</a></li>
+                        <li style="margin-bottom: 8px;"><a href="#" style="color: #ccc; text-decoration: none;">자주 묻는
+                                질문</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 16px; color: #4285f4;">회사소개</h4>
+                    <ul style="list-style: none;">
+                        <li style="margin-bottom: 8px;"><a href="#" style="color: #ccc; text-decoration: none;">회사소개</a>
+                        </li>
+                        <li style="margin-bottom: 8px;"><a href="#" style="color: #ccc; text-decoration: none;">이용약관</a>
+                        </li>
+                        <li style="margin-bottom: 8px;"><a href="#"
+                                style="color: #ccc; text-decoration: none;">개인정보처리방침</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div style="border-top: 1px solid #555; padding-top: 20px; text-align: center; color: #999;">
+                <p>© 2024 BOLT Mall Corp. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>
