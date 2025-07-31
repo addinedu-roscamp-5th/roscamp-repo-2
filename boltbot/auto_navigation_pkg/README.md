@@ -12,4 +12,7 @@
 4.  **에러 및 PID 게인 값 조절**
     *   에러 데이터를 확인하고 PID 게인 값을 조절하려면 다음을 수행합니다.
         *   **Visualization Plot 띄우기**: 에러 데이터 2개를 플롯으로 시각화합니다.
-        *   **Dynamic Reconfiguration**: `rqt_reconfigure`를 실행하고, `configuration > dynamic Reconfiguration`에서 `robotgoalcontroller`를 선택하여 PID 게인 값을 동적으로 조절합니다.
+        *   qmonitor_robot_stat도e_machine.py 창에서 게인값을 조절하고, yaml을 저장하면 config로 사용하게 됩니다.
+        
+5.  **향후 개발**
+    *   관제에서 qmonitor는 통합하실예정이라고 합니다. target_pose를 받고 이동하는 기능 고도화 이후, ros node화 하면 될것으로 예상됩니다.
