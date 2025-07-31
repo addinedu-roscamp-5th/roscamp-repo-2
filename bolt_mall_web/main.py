@@ -16,15 +16,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
-@app.on_event("startup")
-async def startup():
-    await database.connect()
-
-@app.on_event("shutdown")
-async def shutdown():
-    await database.disconnect()
-
-
 # 루트 경로: 메인 쇼핑몰 페이지
 @app.get("/", response_class=HTMLResponse)
 async def bolt_mall(request: Request):

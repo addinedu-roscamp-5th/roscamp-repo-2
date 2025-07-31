@@ -3,3 +3,4 @@ opencv-python
 numpy
 pyyaml
 PySide6
+matplotlib
