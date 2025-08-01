@@ -33,6 +33,8 @@ function updateCartCount() {
 // 페이지 로드 후 자동 실행
 document.addEventListener("DOMContentLoaded", () => {
     updateCartCount();
+    updateCartSummary();
+    updateSelectAllCount(); // 숫자 라벨 업데이트 
 
     // 수량 변경 후 수동 업데이트도 반영 가능 (옵션)
     const quantityInputs = document.querySelectorAll('.quantity-input');
@@ -91,6 +93,7 @@ document.getElementById('select-all').addEventListener('change', function() {
         checkbox.checked = this.checked;
     });
     updateCartSummary(); // 전체 선택/해제 시 요약 갱신
+    updateSelectAllCount(); // 추가: 숫자 라벨 업데이트
 });
 
 // 체크박스/수량 변경 시 요약 자동 갱신 및 전체선택 상태 동기화
@@ -108,20 +111,18 @@ document.addEventListener('change', function(e) {
         if (selectAllCheckbox) {
             selectAllCheckbox.checked = allCheckboxes.length === checkedCheckboxes.length;
         }
+        updateSelectAllCount(); // 숫자 라벨 업데이트 
     }
 });
 
-
-// 개별 체크박스 변경 시 전체 선택 상태 업데이트
-document.addEventListener('change', function(e) {
-    if (e.target.classList.contains('item-checkbox')) {
-        const allCheckboxes = document.querySelectorAll('.item-checkbox');
-        const checkedCheckboxes = document.querySelectorAll('.item-checkbox:checked');
-        const selectAllCheckbox = document.getElementById('select-all');
-        
-        selectAllCheckbox.checked = allCheckboxes.length === checkedCheckboxes.length;
+function updateSelectAllCount() {
+    const checkedCount = document.querySelectorAll('.item-checkbox:checked').length; // 선택된 개수
+    const countLabel = document.querySelector('.select-all-count'); // 숫자 표시용 라벨
+    if (countLabel) {
+        countLabel.textContent = `(${checkedCount}개)`;
     }
-});
+}
+
 
 // 결제 진행
 function proceedToCheckout() {
