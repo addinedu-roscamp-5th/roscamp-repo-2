@@ -48,6 +48,9 @@ function updateCartSummary() {
 
     const cartItems = document.querySelectorAll('.cart-item');
     cartItems.forEach(item => {
+        const checkbox = item.querySelector('.item-checkbox');
+        if (!checkbox || !checkbox.checked) return; // 체크된 상품만 합산
+
         const quantity = parseInt(item.querySelector('.quantity-input').value);
         const priceText = item.querySelector('.current-price').textContent;
         const originalText = item.querySelector('.original-price')?.textContent;
@@ -81,14 +84,33 @@ function updateCartSummary() {
     }
 }
 
-
 // 전체 선택/해제
 document.getElementById('select-all').addEventListener('change', function() {
     const checkboxes = document.querySelectorAll('.item-checkbox');
     checkboxes.forEach(checkbox => {
         checkbox.checked = this.checked;
     });
+    updateCartSummary(); // 전체 선택/해제 시 요약 갱신
 });
+
+// 체크박스/수량 변경 시 요약 자동 갱신 및 전체선택 상태 동기화
+document.addEventListener('change', function(e) {
+    if (
+        e.target.classList.contains('item-checkbox') ||
+        e.target.classList.contains('quantity-input')
+    ) {
+        updateCartSummary();
+    }
+    if (e.target.classList.contains('item-checkbox')) {
+        const allCheckboxes = document.querySelectorAll('.item-checkbox');
+        const checkedCheckboxes = document.querySelectorAll('.item-checkbox:checked');
+        const selectAllCheckbox = document.getElementById('select-all');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = allCheckboxes.length === checkedCheckboxes.length;
+        }
+    }
+});
+
 
 // 개별 체크박스 변경 시 전체 선택 상태 업데이트
 document.addEventListener('change', function(e) {
