@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>boltbot_obstacle</name>
+  <version>0.0.0</version>
+  <description>Safety bubble 및 YOLO 소켓 기반 장애물 인식 ROS 2 파이썬 노드</description>
+  <maintainer email="jhchoman0823@gmail.com">addinedu</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- ament_python 빌드 시스템 사용 선언 -->
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <!-- 런타임 의존성 -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <!-- pip로 설치되는 ultralytics를 exec_depend로 명시 -->
+  <exec_depend>ultralytics</exec_depend>
+
+  <!-- 테스트 의존성 -->
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <!-- 반드시 ament_python을 명시 -->
+    <build_type>ament_python</build_type>
+  </export>
+</package>
