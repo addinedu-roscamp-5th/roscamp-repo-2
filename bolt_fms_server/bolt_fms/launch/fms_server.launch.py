@@ -17,31 +17,36 @@ def generate_launch_description():
         #     executable='agent_manager_node',
         #     name='agent_manager'
         # ),
-        Node(
-            package='bolt_fms',
-            executable='task_manager_node',
-            name='task_manager'
-        ),
-        Node(
-            package='bolt_fms',
-            executable='inventory_manager_node',
-            name='inventory_manager'
-        ),
-        Node(
-            package='bolt_fms',
-            executable='traffic_manager_node',
-            name='traffic_manager'
-        ),
-        Node(
-            package='bolt_fms',
-            executable='qtmonitor_tag_tracker.py',
-            name='qtmonitor_tag_tracker',
-        ),
+        # Node(
+        #     package='bolt_fms',
+        #     executable='task_manager_node',
+        #     name='task_manager'
+        # ),
+        # Node(
+        #     package='bolt_fms',
+        #     executable='inventory_manager_node',
+        #     name='inventory_manager'
+        # ),
+        # Node(
+        #     package='bolt_fms',
+        #     executable='traffic_manager_node',
+        #     name='traffic_manager'
+        # ),
+        # Node(
+        #     package='bolt_fms',
+        #     executable='qtmonitor_tag_tracker.py',
+        #     name='qtmonitor_tag_tracker',
+        # ),
         # Node(
         #     package='bolt_fms',
         #     executable='monitoring_manager_node',
         #     name='monitoring_manager'
         # ),
+        Node(
+            package='bolt_fms',
+            executable='robot_status_manager',
+            name='robot_status_manager'
+        ),
         # domain_bridge 노드는 ExecuteProcess로 실행해야 함
         ExecuteProcess(
             cmd=[

@@ -4,3 +4,4 @@ numpy
 pyyaml
 PySide6
 matplotlib
+catkin_pkg
