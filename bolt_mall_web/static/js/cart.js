@@ -100,8 +100,7 @@ document.getElementById('select-all').addEventListener('change', function() {
 document.addEventListener('change', function(e) {
     if (
         e.target.classList.contains('item-checkbox') ||
-        e.target.classList.contains('quantity-input')
-    ) {
+        e.target.classList.contains('quantity-input')) {
         updateCartSummary();
     }
     if (e.target.classList.contains('item-checkbox')) {
@@ -128,16 +127,35 @@ function updateSelectAllCount() {
 function proceedToCheckout() {
     const items = [];
 
-    document.querySelectorAll(".cart-item").forEach(item => {
-        // const product_name = item.querySelector(".product-name").textContent.trim();
-        // const cartItems = document.querySelectorAll(".cart-item");
-        const quantity = parseInt(item.querySelector(".quantity-input").value);
-        const price = parseInt(item.querySelector(".product-price").textContent.replace(/[^0-9]/g, ""));
+    // 체크된 체크박스만 선택
+    document.querySelectorAll(".item-checkbox:checked").forEach(checkbox => {
+        const item = checkbox.closest(".cart-item");
+        if (!item) return;
+
+        const quantityInput = item.querySelector(".quantity-input");
+        const priceElem = item.querySelector(".current-price");
         const itemId = item.dataset.id;
-        items.push({ itemId, quantity, price });
-        console.log(items);
-        
+
+        if (!quantityInput || !priceElem || !itemId) return;
+
+        const quantity = parseInt(quantityInput.value);
+        const price = parseInt(priceElem.textContent.replace(/[^0-9]/g, ""));
+
+        if (isNaN(quantity) || isNaN(price)) return;
+
+        items.push({
+            item_id: itemId,
+            order_amount: quantity,
+            unit_price: price
+        });
     });
+
+    console.log("최종 전송 아이템:", items);
+
+    if (items.length === 0) {
+        alert("선택된 상품이 없습니다.");
+        return;
+    }
 
     fetch("/orders", {
         method: "POST",
@@ -147,7 +165,6 @@ function proceedToCheckout() {
     .then(res => res.json())
     .then(data => {
         if (data.status === "success") {
-            // ✅ 결제 완료 페이지로 이동
             window.location.href = "/payment-complete";
         } else {
             alert("❌ 주문 처리 실패");
@@ -158,7 +175,6 @@ function proceedToCheckout() {
         alert("❌ 주문 처리 중 오류 발생");
     });
 }
-
 
 // 쇼핑 계속하기
 document.querySelector('.continue-shopping').addEventListener('click', function(e) {

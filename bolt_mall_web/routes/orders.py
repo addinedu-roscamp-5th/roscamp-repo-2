@@ -4,26 +4,36 @@ from databases import Database
 
 router = APIRouter()
 
-c_id = 0
+c_id = 0  # 임시 고객번호
+
 @router.post("/orders")
 async def create_order(request: Request, db: Database = Depends(get_db)):
-    data = await request.json()
-    items = data.get("items", [])
-    c_id = c_id+1
-    for item in items:
-        await db.execute(
-            """
-            INSERT INTO Order_Item (customer_id, item_id, quantity, unit_price, status, order_date)
-            VALUES (:customer_id, :item_id, :quantity, :unit_price, :status, NOW())
-            """,
-            {
-                "customer_id": c_id,  # 임시값 또는 인증 사용자 기반 ID
-                "item_id": item["itemId"],
-                "quantity": item["quantity"],
-                "unit_price": item["price"],
-                "status": "대기"
-                
-            }
-        )
+    global c_id
+    c_id += 1  # 임시 고객번호 증가
 
-    return { "status": "success" }
+    data = await request.json()
+    # print("받은 주문 데이터:", data)   # 서버 터미널에 출력됨
+    items = data.get("items", [])
+    # print("상품 리스트 개수:", len(items))
+
+    # 1) Orders 테이블에 주문 기본 데이터 삽입 (고객ID, 시간, 상태)
+    query_order = """
+    INSERT INTO Orders (customer_id, order_dttm, order_status)
+    VALUES (:customer_id, NOW(), 0)
+    """
+    order_id = await db.execute(query=query_order, values={"customer_id": c_id})
+
+    # 2) Orders_Item 테이블에 주문한 상품들 각각 저장
+    for item in items:
+        query_item = """
+        INSERT INTO Orders_Item (order_id, item_id, order_amount, unit_price)
+        VALUES (:order_id, :item_id, :order_amount, :unit_price)
+        """
+        await db.execute(query=query_item, values={
+            "order_id": order_id,
+            "item_id": item["item_id"],
+            "order_amount": item["order_amount"],
+            "unit_price": item["unit_price"]
+        })
+
+    return {"status": "success"}
