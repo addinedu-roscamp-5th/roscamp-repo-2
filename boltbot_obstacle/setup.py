@@ -31,6 +31,7 @@ setup(
         'console_scripts': [
             'obstacle_node = boltbot_obstacle.obstacle_node:main',
             'yolo_node     = boltbot_obstacle.yolo_socket_node:main',
+            'obstacle_decision = boltbot_obstacle.obstacle_decision:main',
         ],
     },
 )

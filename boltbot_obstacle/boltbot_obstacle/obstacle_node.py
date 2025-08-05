@@ -11,7 +11,7 @@ class SafetyBubbleNode(Node):
         self.bubble_radius = self.get_parameter('bubble_radius').value
         self.prev_stop = False
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        self.stop_pub = self.create_publisher(Bool, '/cmd_stop', 10)
+        self.stop_pub = self.create_publisher(Bool, '/bubble_stop', 10)
         self.get_logger().info(f'Safety bubble active: radius={self.bubble_radius*100:.0f}cm')
 
     def scan_callback(self, msg):
