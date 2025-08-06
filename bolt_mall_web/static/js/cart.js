@@ -157,7 +157,7 @@ function proceedToCheckout() {
         return;
     }
 
-    fetch("/orders", {
+    fetch("/orders", { // 주문 처리 API 엔드포인트 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items })

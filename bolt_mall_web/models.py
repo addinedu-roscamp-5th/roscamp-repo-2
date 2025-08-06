@@ -1,10 +1,11 @@
 from sqlalchemy import Column, Integer, String, DECIMAL, DateTime, ForeignKey, CheckConstraint
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import relationship
+from database import Base
 
-Base = declarative_base()
-
+# Item (상품 설명)
 class Item(Base):
     __tablename__ = "Item"
+
     item_id = Column(Integer, primary_key=True, nullable=False)
     item_name = Column(String(20), nullable=False)
     category = Column(String(20), nullable=False)
@@ -17,10 +18,16 @@ class Item(Base):
         CheckConstraint('price >= 0', name='check_price_nonnegative'),
     )
 
+    # 관계 설정
+    inventories = relationship("Inventory", back_populates="item_relation")
+    orders_items = relationship("Orders_Item", back_populates="item_relation")
+    inbounds = relationship("Inbound", back_populates="item_relation")
 
+# Rack (랙)
 class Rack(Base):
     __tablename__ = "Rack"
-    rack = Column(Integer, primary_key=True, nullable=False)  # 랙 번호
+
+    rack = Column(Integer, primary_key=True, nullable=False)
     x_start = Column(Integer, nullable=False)
     x_end = Column(Integer, nullable=False)
     y_start = Column(Integer, nullable=False)
@@ -34,45 +41,49 @@ class Rack(Base):
         CheckConstraint('y_end >= 0', name='check_y_end_nonnegative'),
     )
 
+    locations = relationship("Location", back_populates="rack_relation")
 
+# Location (적재 위치)
 class Location(Base):
     __tablename__ = "Location"
+
     location_id = Column(Integer, primary_key=True, autoincrement=True)
     rack = Column(Integer, ForeignKey("Rack.rack"), nullable=False)
     row_num = Column(Integer, nullable=False)
     col_num = Column(Integer, nullable=False)
-    description = Column(String(100), nullable=True)  # NULL 허용
+    description = Column(String(100), nullable=True)
 
-    rack_relation = relationship("Rack", backref="locations")
+    rack_relation = relationship("Rack", back_populates="locations")
+    inventories = relationship("Inventory", back_populates="location_relation")
 
-
+# Inventory (재고 위치)
 class Inventory(Base):
     __tablename__ = "Inventory"
-    inventory_id = Column(Integer, primary_key=True, autoincrement=True)
-    location_id = Column(Integer, ForeignKey("Location.location_id"), nullable=False)
-    item_id = Column(Integer, ForeignKey("Item.item_id"), nullable=False)
-    ib_dttm = Column(DateTime, nullable=False)
-    amount = Column(Integer, nullable=False)
 
-    __table_args__ = (
-        CheckConstraint('amount >= 0', name='check_amount_nonnegative'),
-    )
+    location_id = Column(Integer, ForeignKey("Location.location_id"), primary_key=True, nullable=False)
+    item_id = Column(Integer, ForeignKey("Item.item_id"), primary_key=True, nullable=False)
+    iv_dttm = Column(DateTime, nullable=False)
 
-    location_relation = relationship("Location", backref="inventories")
-    item_relation = relationship("Item", backref="inventories")
+    location_relation = relationship("Location", back_populates="inventories")
+    item_relation = relationship("Item", back_populates="inventories")
 
-
+# Orders (주문 정보)
 class Orders(Base):
     __tablename__ = "Orders"
+
     order_id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, nullable=False)  # 외래키 제약조건은 고객 테이블이 있으면 추가 가능
+    customer_id = Column(Integer, nullable=False)  # FK는 나중에 Customer 테이블 생기면 추가 가능
     order_dttm = Column(DateTime, nullable=False)
-    order_status = Column(Integer, nullable=False)  # 0~3 상태 값
-    destination = Column(String(40), nullable=True)  # NULL 허용
+    order_status = Column(Integer, nullable=False)
+    destination = Column(String(40), nullable=True)
 
+    order_items = relationship("Orders_Item", back_populates="order_relation")
+    outbounds = relationship("Outbound", back_populates="order_relation")
 
+# Orders_Item (각 주문별 상품)
 class Orders_Item(Base):
     __tablename__ = "Orders_Item"
+
     order_id = Column(Integer, ForeignKey("Orders.order_id"), primary_key=True, nullable=False)
     item_id = Column(Integer, ForeignKey("Item.item_id"), primary_key=True, nullable=False)
     order_amount = Column(Integer, nullable=False)
@@ -83,32 +94,31 @@ class Orders_Item(Base):
         CheckConstraint('unit_price >= 0', name='check_unit_price_nonnegative'),
     )
 
-    order = relationship("Orders", backref="order_items")
-    item = relationship("Item", backref="order_items")
+    order_relation = relationship("Orders", back_populates="order_items")
+    item_relation = relationship("Item", back_populates="orders_items")
 
-
+# Outbound (출고)
 class Outbound(Base):
     __tablename__ = "Outbound"
-    ob_dttm = Column(DateTime, primary_key=True, autoincrement=True)  # 출고일자 + 시각 (PK)
-    order_id = Column(Integer, ForeignKey("Orders.order_id"), nullable=False)
-    ob_id = Column(Integer, nullable=False)  # 출고시 바코드 번호
-    ob_status = Column(Integer, nullable=False)  # 0/1 출고상태
+
+    order_id = Column(Integer, ForeignKey("Orders.order_id"), primary_key=True, nullable=False)
+    ob_id = Column(Integer, primary_key=True, nullable=False)
+    ob_dttm = Column(DateTime, nullable=False)
+    ob_status = Column(Integer, nullable=False)
     destination = Column(String(40), nullable=True)
 
-    order = relationship("Orders", backref="outbounds")
+    order_relation = relationship("Orders", back_populates="outbounds")
 
 
+# Inbound (입고)
 class Inbound(Base):
     __tablename__ = "Inbound"
-    inbound_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    ib_id = Column(Integer, primary_key=True, autoincrement=True)
     item_id = Column(Integer, ForeignKey("Item.item_id"), nullable=False)
-    item_amount = Column(Integer, nullable=False)  # 한 박스 별 상품 개수
-    ib_amount = Column(Integer, nullable=False)  # 입고된 박스 수량
-    ib_status = Column(Integer, nullable=False)  # 입고 진행 상황
+    item_amount = Column(Integer, nullable=False)
+    ib_amount = Column(Integer, nullable=False)
+    ib_status = Column(Integer, nullable=False)
+    ib_dttm = Column(DateTime, nullable=False)
 
-    item = relationship("Item", backref="inbounds")
-
-    __table_args__ = (
-        CheckConstraint('item_amount > 0', name='check_item_amount_positive'),
-        CheckConstraint('ib_amount >= 0', name='check_ib_amount_nonnegative'),
-    )
+    item_relation = relationship("Item", back_populates="inbounds")
