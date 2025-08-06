@@ -9,33 +9,42 @@ from pupil_apriltags import Detector
 import cv2
 import numpy as np
 
-from PySide6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QTextEdit, QLineEdit
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QWidget,
+    QVBoxLayout,
+    QPushButton,
+    QHBoxLayout,
+    QTextEdit,
+    QLineEdit,
+)
 from PySide6.QtGui import QImage, QPixmap, QMouseEvent
 from PySide6.QtCore import QTimer
 
 import sys
+
 print("---------------------------------------------------------------")
 print(sys.executable)  # 실행 중인 파이썬 경로 확인
-
 
 
 from pupil_apriltags import Detector
 
 # === 설정 ===
 TAG_ID = 2
-CAMERA_INDEX = 3
+CAMERA_INDEX = 2
 VISUALIZE = True
 
 # === 그리드 설정 ===
-CAP_RATIO = 0.6
+CAP_RATIO = 1
 
 CAP_WIDTH = int(1920 * CAP_RATIO)
 CAP_HEIGHT = int(1080 * CAP_RATIO)
 
-TOP_LEFT     = (0, 0)
-TOP_RIGHT    = (CAP_WIDTH - 1, 0)
-BOT_LEFT     = (0, CAP_HEIGHT - 1)
-BOT_RIGHT    = (CAP_WIDTH - 1, CAP_HEIGHT - 1)
+TOP_LEFT = (0, 0)
+TOP_RIGHT = (CAP_WIDTH - 1, 0)
+BOT_LEFT = (0, CAP_HEIGHT - 1)
+BOT_RIGHT = (CAP_WIDTH - 1, CAP_HEIGHT - 1)
 
 ROWS, COLS = 5, 10
 REAL_MAX_WIDTH = 1.91
@@ -48,17 +57,22 @@ REAL_HEIGHT = REAL_MAX_HEIGHT / REAL_ROWS
 horizontal_divisions = ROWS - 1
 vertical_divisions = COLS - 1
 
+
 # === ROS 노드 클래스 ===
 class PoseMultiPublisher(Node):
     def __init__(self, robot_ids, get_pose_func_map, publish_period=0.03):
-        super().__init__('multi_pose_publisher')
+        super().__init__("multi_pose_publisher")
         self.pose_publishers = {}  # {id: publisher}
         self.get_pose_func_map = get_pose_func_map  # {id: func}
 
         for robot_id in robot_ids:
-            topic = f'/robot{robot_id}/camera_pose'
-            self.pose_publishers[robot_id] = self.create_publisher(PoseStamped, topic, 10)
-            self.create_timer(publish_period, lambda rid=robot_id: self.publish_pose(rid))
+            topic = f"/robot{robot_id}/camera_pose"
+            self.pose_publishers[robot_id] = self.create_publisher(
+                PoseStamped, topic, 10
+            )
+            self.create_timer(
+                publish_period, lambda rid=robot_id: self.publish_pose(rid)
+            )
 
     def publish_pose(self, robot_id):
         pose_func = self.get_pose_func_map[robot_id]
@@ -69,7 +83,7 @@ class PoseMultiPublisher(Node):
         x, y, yaw = pose
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'map'
+        msg.header.frame_id = "map"
         msg.pose.position.x = float(x)
         msg.pose.position.y = float(y)
         msg.pose.position.z = 0.0
@@ -77,19 +91,24 @@ class PoseMultiPublisher(Node):
         msg.pose.orientation.w = cos(yaw / 2.0)
 
         self.pose_publishers[robot_id].publish(msg)
-        self.get_logger().info(f"📤 /robot{robot_id}/camera_pose → x={x:.3f}, y={y:.3f}, yaw={yaw:.3f}")
+        self.get_logger().info(
+            f"📤 /robot{robot_id}/camera_pose → x={x:.3f}, y={y:.3f}, yaw={yaw:.3f}"
+        )
+
 
 class TargetPosePublisher(Node):
     def __init__(self, robot_id, tag_id):
-        super().__init__(f'robot{robot_id}_target_publisher')
+        super().__init__(f"robot{robot_id}_target_publisher")
         self.robot_id = robot_id
         self.tag_id = tag_id
-        self.publisher = self.create_publisher(PoseStamped, f'/robot{robot_id}/target_pose', 10)
+        self.publisher = self.create_publisher(
+            PoseStamped, f"/robot{robot_id}/target_pose", 10
+        )
 
     def publish_target_pose(self, x, y, yaw):
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'map'
+        msg.header.frame_id = "map"
         msg.pose.position.x = float(x)
         msg.pose.position.y = float(y)
         msg.pose.position.z = 0.0
@@ -97,7 +116,10 @@ class TargetPosePublisher(Node):
         msg.pose.orientation.w = cos(yaw / 2.0)
 
         self.publisher.publish(msg)
-        self.get_logger().info(f"📤 /robot{self.robot_id}/target_pose → x={x:.3f}, y={y:.3f}, yaw={yaw:.3f}")
+        self.get_logger().info(
+            f"📤 /robot{self.robot_id}/target_pose → x={x:.3f}, y={y:.3f}, yaw={yaw:.3f}"
+        )
+
 
 # === 웹캠 추적 스레드 ===
 class WebcamThread(threading.Thread):
@@ -126,18 +148,24 @@ class WebcamThread(threading.Thread):
         if self.grid_corners is None or len(self.grid_corners) != 4:
             return []
 
-        lefts = [self.interpolate(self.p0, self.p2, i / h_div) for i in range(h_div + 1)]
-        rights = [self.interpolate(self.p1, self.p3, i / h_div) for i in range(h_div + 1)]
+        lefts = [
+            self.interpolate(self.p0, self.p2, i / h_div) for i in range(h_div + 1)
+        ]
+        rights = [
+            self.interpolate(self.p1, self.p3, i / h_div) for i in range(h_div + 1)
+        ]
 
         tops = [self.interpolate(self.p0, self.p1, i / v_div) for i in range(v_div + 1)]
-        bottoms = [self.interpolate(self.p2, self.p3, i / v_div) for i in range(v_div + 1)]
+        bottoms = [
+            self.interpolate(self.p2, self.p3, i / v_div) for i in range(v_div + 1)
+        ]
 
         grid_points = []
         for row, (l, r) in enumerate(zip(lefts, rights)):
             for col, (t, b) in enumerate(zip(tops, bottoms)):
                 pt = self.interpolate(l, r, col / v_div)
                 grid_points.append((row, col, pt))
-        
+
         return grid_points
 
     def visualize_grid(self, img, grid_points, rows, cols):
@@ -158,10 +186,9 @@ class WebcamThread(threading.Thread):
         for row, col, pt in grid_points:
             cv2.circle(img, pt, 2, (0, 0, 255), 2)
 
-
     # 📍 각 꼭짓점에서 가장 가까운 실제 에이프릴 태그 중심 좌표로 snap
     def find_closest(self, center):
-        min_dist = float('inf')
+        min_dist = float("inf")
         closest = center
         for c in self.all_tag_poses:
             c_pt = c["pose"][:2]  # (x, y)만 사용
@@ -170,10 +197,12 @@ class WebcamThread(threading.Thread):
                 min_dist = dist
                 closest = c_pt
         return tuple(closest)
-    
+
     def get_tag_pose(self, tag_id):
         with self.result_lock:
-            return [entry["pose"] for entry in self.all_tag_poses if entry["id"] == tag_id]
+            return [
+                entry["pose"] for entry in self.all_tag_poses if entry["id"] == tag_id
+            ]
 
     def get_all_tag_poses(self):
         with self.result_lock:
@@ -189,9 +218,10 @@ class WebcamThread(threading.Thread):
 
         self.grid_corners = [self.p0, self.p1, self.p2, self.p3]
         if self.grid_corners:
-            grid_points = self.generate_grid_points(horizontal_divisions, vertical_divisions)
+            grid_points = self.generate_grid_points(
+                horizontal_divisions, vertical_divisions
+            )
             self.visualize_grid(frame, grid_points, ROWS, COLS)
-
 
     def run(self):
         cap = cv2.VideoCapture(self.camera_index)
@@ -202,7 +232,7 @@ class WebcamThread(threading.Thread):
             print("❌ 웹캠 열기 실패")
             return
 
-        detector = Detector(families='tag36h11')
+        detector = Detector(families="tag36h11")
         print(f"🎯 AprilTag ID {self.tag_id} 추적 중...")
 
         while self.running:
@@ -221,11 +251,13 @@ class WebcamThread(threading.Thread):
                 dx = pt1[0] - pt0[0]
                 dy = pt1[1] - pt0[1]
                 yaw = atan2(dy, dx)
-                current_tag_poses_list.append({
-                    "id": tag.tag_id,
-                    "pose": (cX, cY, -yaw),
-                    "corners": [(int(p[0]), int(p[1])) for p in tag.corners]
-                })
+                current_tag_poses_list.append(
+                    {
+                        "id": tag.tag_id,
+                        "pose": (cX, cY, -yaw),
+                        "corners": [(int(p[0]), int(p[1])) for p in tag.corners],
+                    }
+                )
                 if tag.tag_id == self.tag_id:
                     with self.result_lock:
                         self.pose = (cX, cY, -yaw)
@@ -249,10 +281,18 @@ class WebcamThread(threading.Thread):
 
 
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView
+    QApplication,
+    QLabel,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
 )
 from PySide6.QtCore import Qt
+
 
 class ImageWindow(QWidget):
     def __init__(self, robot_tag_map=None, webcam_thread=None):
@@ -268,10 +308,9 @@ class ImageWindow(QWidget):
         self.update_timer.start(500)
         self.selected_row = None  # 선택된 행 번호
 
-
         # 이미지 및 Reset 버튼
         self.image_label = QLabel()
-        self.image_label.setFixedSize(CAP_WIDTH, CAP_HEIGHT)
+        self.image_label.setScaledContents(True)  # 이미지를 라벨 크기에 맞게 스케일 조정
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_grid_corners)
 
@@ -297,7 +336,6 @@ class ImageWindow(QWidget):
         top_layout.addWidget(self.image_label)
         top_layout.addWidget(self.robot_table)
         top_layout.addWidget(self.pose_label)
-        
 
         bottom_layout = QVBoxLayout()
         bottom_layout.addWidget(self.reset_button)
@@ -310,7 +348,6 @@ class ImageWindow(QWidget):
         self.goal_input_y.setPlaceholderText("목표 y (m)")
         self.goal_input_yaw.setPlaceholderText("yaw (-180~180°)")
 
-
         # 📤 목표 발행 버튼
         self.goal_button = QPushButton("📤 목표 발행")
         self.goal_button.clicked.connect(self.publish_target_pose)
@@ -322,13 +359,11 @@ class ImageWindow(QWidget):
         goal_input_layout.addWidget(self.goal_input_yaw)
         goal_input_layout.addWidget(self.goal_button)
 
-    
         # 배치 추가
         bottom_layout.addLayout(goal_input_layout)
 
         # 퍼블리셔 캐시 {robot_id: TargetPosePublisher}
         self.target_publishers = {}
-
 
         self.populate_robot_table()
 
@@ -367,14 +402,16 @@ class ImageWindow(QWidget):
         tag_id = self.robot_tag_map.get(robot_id)
         pose = _get_transed_pose_for_tag(self.webcam_thread, tag_id)
         if pose is None:
-            self.pose_label.setText(f"🛰️ 위치 정보: (로봇 {robot_id}, 태그 {tag_id}) ➤ 감지되지 않음")
+            self.pose_label.setText(
+                f"🛰️ 위치 정보: (로봇 {robot_id}, 태그 {tag_id}) ➤ 감지되지 않음"
+            )
         else:
             x, y, yaw = pose
             deg = np.degrees(yaw)
             self.pose_label.setText(
                 f"🛰️ 위치 정보: 로봇 {robot_id}, 태그 {tag_id} ➤ x={x:.2f}, y={y:.2f}, yaw={yaw:.2f} rad ({deg:.1f}°)"
             )
-    
+
     def update_image(self, frame):
         self.current_frame = frame.copy()
         if self.webcam_thread:
@@ -383,19 +420,41 @@ class ImageWindow(QWidget):
                 corners = entry.get("corners")
                 if corners:
                     for i in range(4):
-                        cv2.line(self.current_frame, corners[i], corners[(i+1)%4], (0,255,0), 2)
+                        cv2.line(
+                            self.current_frame,
+                            corners[i],
+                            corners[(i + 1) % 4],
+                            (0, 255, 0),
+                            2,
+                        )
                     cX, cY, _ = entry["pose"]
-                    cv2.circle(self.current_frame, (cX, cY), 5, (0,0,255), -1)
-                    cv2.putText(self.current_frame, f"ID:{entry['id']}", (cX+5, cY-5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 3)
-                    cv2.putText(self.current_frame, f"ID:{entry['id']}", (cX+5, cY-5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+                    cv2.circle(self.current_frame, (cX, cY), 5, (0, 0, 255), -1)
+                    cv2.putText(
+                        self.current_frame,
+                        f"ID:{entry['id']}",
+                        (cX + 5, cY - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 0, 0),
+                        3,
+                    )
+                    cv2.putText(
+                        self.current_frame,
+                        f"ID:{entry['id']}",
+                        (cX + 5, cY - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 255, 255),
+                        2,
+                    )
             if self.draw_grid_once:
                 self.webcam_thread.draw_grid_corners(self.current_frame)
 
         h, w, ch = self.current_frame.shape
         bytes_per_line = ch * w
-        q_image = QImage(self.current_frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
+        q_image = QImage(
+            self.current_frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888
+        )
         pixmap = QPixmap.fromImage(q_image)
         self.image_label.setPixmap(pixmap)
 
@@ -420,11 +479,11 @@ class ImageWindow(QWidget):
         # 퍼블리셔가 없으면 생성
         if robot_id not in self.target_publishers:
             self.target_publishers[robot_id] = TargetPosePublisher(robot_id, tag_id)
-        
+
         self.target_publishers[robot_id].publish_target_pose(x, y, yaw)
-        print(f"✅ 목표 위치 발행됨 → /robot{robot_id}/target_pose : x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
-
-
+        print(
+            f"✅ 목표 위치 발행됨 → /robot{robot_id}/target_pose : x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}"
+        )
 
     # 기존 WebcamThread의 visualize_grid 함수 복사
     def visualize_grid(self, img, grid_points, rows, cols):
@@ -439,14 +498,12 @@ class ImageWindow(QWidget):
         for row, col, pt in grid_points:
             cv2.circle(img, pt, 2, (0, 0, 255), 2)
 
-    
-
 
 def main():
     # 로봇 ID와 에이프릴태그 ID 매핑
     robot_tag_map = {
-        1: 2,   # 로봇 1 → 태그 2
-        2: 4,   # 로봇 2 → 태그 4
+        1: 2,  # 로봇 1 → 태그 2
+        2: 4,  # 로봇 2 → 태그 4
         # 필요시 추가
     }
 
@@ -455,13 +512,17 @@ def main():
     image_window.show()
 
     # 스레드 실행 시 콜백 전달
-    webcam_thread = WebcamThread(tag_id=TAG_ID, camera_index=CAMERA_INDEX, visualize=True, frame_callback=image_window.update_image)
+    webcam_thread = WebcamThread(
+        tag_id=TAG_ID,
+        camera_index=CAMERA_INDEX,
+        visualize=True,
+        frame_callback=image_window.update_image,
+    )
     webcam_thread.start()
 
     image_window.set_webcam_thread(webcam_thread)
-    
-    rclpy.init(args=None)
 
+    rclpy.init(args=None)
 
     robot_ids = list(robot_tag_map.keys())
 
@@ -472,9 +533,13 @@ def main():
     get_pose_func_map = {rid: make_pose_func(rid) for rid in robot_ids}
 
     # 노드 실행
-    multi_publisher_node = PoseMultiPublisher(robot_ids, get_pose_func_map, publish_period=1)
+    multi_publisher_node = PoseMultiPublisher(
+        robot_ids, get_pose_func_map, publish_period=1
+    )
 
-    ros_thread = threading.Thread(target=lambda: rclpy.spin(multi_publisher_node), daemon=True)
+    ros_thread = threading.Thread(
+        target=lambda: rclpy.spin(multi_publisher_node), daemon=True
+    )
     ros_thread.start()
 
     # Qt 메인 루프 실행
@@ -489,6 +554,7 @@ def main():
         webcam_thread.join()
         print("✅ 프로그램 종료")
 
+
 # ✅ 헬퍼 함수: tag_id에 해당하는 pose를 가져와 변환
 def _get_transed_pose_for_tag(webcam_thread, tag_id):
     poses = webcam_thread.get_tag_pose(tag_id)
@@ -501,13 +567,19 @@ def _get_transed_pose_for_tag(webcam_thread, tag_id):
         return None
 
     # 변환
-    grid_corners = np.array([webcam_thread.p0, webcam_thread.p1, webcam_thread.p2, webcam_thread.p3], dtype=np.float32)
-    unit_square = np.array([
-        [0.0, 0.0],
-        [1.0, 0.0],
-        [0.0, 1.0],
-        [1.0, 1.0],
-    ], dtype=np.float32)
+    grid_corners = np.array(
+        [webcam_thread.p0, webcam_thread.p1, webcam_thread.p2, webcam_thread.p3],
+        dtype=np.float32,
+    )
+    unit_square = np.array(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
     Minv = cv2.getPerspectiveTransform(grid_corners, unit_square)
     img_point = np.array([[[x, y]]], dtype=np.float32)
     relative_point = cv2.perspectiveTransform(img_point, Minv)
@@ -516,5 +588,6 @@ def _get_transed_pose_for_tag(webcam_thread, tag_id):
     real_y = REAL_MAX_HEIGHT - v * REAL_MAX_HEIGHT
     return real_x, real_y, yaw
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

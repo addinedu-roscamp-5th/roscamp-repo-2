@@ -45,7 +45,7 @@ class Task:
         return self.priority < other.priority
 
 
-class CompositeTask:
+class ProccessTask:
     def __init__(self, task_id, steps: list[Task]):
         self.task_id = task_id
         self.steps = steps
@@ -83,7 +83,7 @@ class Robot:
 class TaskManager:
     def __init__(self):
         self.task_queue = PriorityQueue()
-        self.all_composite_tasks: list[CompositeTask] = []
+        self.all_proccess_tasks: list[ProccessTask] = []
         self.robots = {
             1: Robot(1, RobotType.MOBILE, (0, 0)),
             2: Robot(2, RobotType.MOBILE, (10, 10)),
@@ -92,9 +92,9 @@ class TaskManager:
             5: Robot(5, RobotType.ARM, (3, 2)),
         }
 
-    def add_composite_task(self, composite: CompositeTask):
-        self.all_composite_tasks.append(composite)
-        step = composite.current_step()
+    def add_proccess_task(self, proccess: ProccessTask):
+        self.all_proccess_tasks.append(proccess)
+        step = proccess.current_step()
         if step:
             self.task_queue.put((step.priority, time.time(), step))
 
@@ -105,12 +105,12 @@ class TaskManager:
         while not self.task_queue.empty():
             _, _, task = self.task_queue.get()
 
-            # ✅ CompositeTask 찾기
-            composite = next((c for c in self.all_composite_tasks if task in c.steps), None)
+            # ✅ proccessTask 찾기
+            proccess = next((c for c in self.all_proccess_tasks if task in c.steps), None)
 
-            if composite and task.robot_type == RobotType.MOBILE and composite.assigned_mobile_robot_id:
+            if proccess and task.robot_type == RobotType.MOBILE and proccess.assigned_mobile_robot_id:
                 # mobile 작업이면서 이미 로봇이 지정된 경우 해당 로봇 강제 사용
-                robot = self.robots.get(composite.assigned_mobile_robot_id)
+                robot = self.robots.get(proccess.assigned_mobile_robot_id)
                 if robot and robot.is_available():
                     assigned = True
                 else:
@@ -125,8 +125,8 @@ class TaskManager:
                 robot.current_task = task
 
                 # ✅ 처음 할당된 mobile 로봇 기억
-                if task.robot_type == RobotType.MOBILE and composite and not composite.assigned_mobile_robot_id:
-                    composite.assigned_mobile_robot_id = robot.id
+                if task.robot_type == RobotType.MOBILE and proccess and not proccess.assigned_mobile_robot_id:
+                    proccess.assigned_mobile_robot_id = robot.id
 
                 messages.append(f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}")
             else:
@@ -143,12 +143,12 @@ class TaskManager:
         for robot in self.robots.values():
             if robot.is_available() and robot.robot_type == task.robot_type:
                 if robot.robot_type == RobotType.MOBILE:
-                    # 다른 CompositeTask에 이미 고정된 로봇인지 확인
+                    # 다른 proccessTask에 이미 고정된 로봇인지 확인
                     if any(
                         c.assigned_mobile_robot_id == robot.id and not c.is_done()
-                        for c in self.all_composite_tasks
+                        for c in self.all_proccess_tasks
                     ):
-                        continue  # 🔒 이미 다른 CompositeTask에 묶여 있음
+                        continue  # 🔒 이미 다른 proccessTask에 묶여 있음
                 dist = (robot.position[0] - task.location[0])**2 + (robot.position[1] - task.location[1])**2
                 if dist < min_dist:
                     min_dist = dist
@@ -165,8 +165,8 @@ class TaskManager:
         r.status = RobotStatus.IDLE
         r.current_task = None
 
-        # find composite task and advance
-        for comp in self.all_composite_tasks:
+        # find proccess task and advance
+        for comp in self.all_proccess_tasks:
             if task in comp.steps:
                 comp.advance()
                 next_step = comp.current_step()
@@ -174,28 +174,28 @@ class TaskManager:
                     self.task_queue.put((next_step.priority, time.time(), next_step))
                     return f"✅ Completed task {task.task_id}, next step {next_step.task_type.name} enqueued"
                 else:
-                    return f"✅ Composite task {comp.task_id} fully completed"
+                    return f"✅ proccess task {comp.task_id} fully completed"
 
         return f"✅ Task {task.task_id} completed by Robot {robot_id}"
 
 
-def create_inbound_task(composite_id, start_pos=(1, 1), display_pos=(5, 5)):
+def create_inbound_task(proccess_id, start_pos=(1, 1), display_pos=(5, 5)):
     steps = [
-        Task(f"{composite_id}_1", TaskType.MOVE, RobotType.MOBILE, start_pos),
-        Task(f"{composite_id}_2", TaskType.LOAD, RobotType.ARM, start_pos),
-        Task(f"{composite_id}_3", TaskType.MOVE, RobotType.MOBILE, display_pos),
-        Task(f"{composite_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, display_pos)
+        Task(f"{proccess_id}_1", TaskType.MOVE, RobotType.MOBILE, start_pos),
+        Task(f"{proccess_id}_2", TaskType.LOAD, RobotType.ARM, start_pos),
+        Task(f"{proccess_id}_3", TaskType.MOVE, RobotType.MOBILE, display_pos),
+        Task(f"{proccess_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, display_pos)
     ]
-    return CompositeTask(composite_id, steps)
+    return ProccessTask(proccess_id, steps)
 
-def create_outbound_task(composite_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> CompositeTask:
+def create_outbound_task(proccess_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> ProccessTask:
     steps = [
-        Task(f"{composite_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
-        Task(f"{composite_id}_2", TaskType.WAIT_USER, RobotType.MOBILE, pick_pos, priority=1),
-        Task(f"{composite_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
-        Task(f"{composite_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
+        Task(f"{proccess_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
+        Task(f"{proccess_id}_2", TaskType.WAIT_USER, RobotType.MOBILE, pick_pos, priority=1),
+        Task(f"{proccess_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
+        Task(f"{proccess_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
     ]
-    return CompositeTask(composite_id, steps)
+    return ProccessTask(proccess_id, steps)
 
     
 
@@ -249,7 +249,7 @@ class TaskManagerUI(QWidget):
         # 작업 테이블
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["Composite ID", "Task ID", "Type", "Robot", "Status", "Location"])
+        self.table.setHorizontalHeaderLabels(["proccess ID", "Task ID", "Type", "Robot", "Status", "Location"])
         layout.addWidget(self.table)
 
         self.setLayout(layout)
@@ -258,14 +258,14 @@ class TaskManagerUI(QWidget):
 
     def add_inbound(self):
         task = create_inbound_task(f"입고_{self.counter}")
-        self.manager.add_composite_task(task)
+        self.manager.add_proccess_task(task)
         print(f"➕ 입고 작업 {task.task_id} 추가됨")
         self.counter += 1
         self.update_table()
 
     def add_outbound(self):
         task = create_outbound_task(f"출고_{self.counter}")
-        self.manager.add_composite_task(task)
+        self.manager.add_proccess_task(task)
         print(f"📤 출고 작업 {task.task_id} 추가됨")
         self.counter += 1
         self.update_table()
@@ -282,19 +282,19 @@ class TaskManagerUI(QWidget):
 
     def update_table(self):
         tasks = []
-        for comp in self.manager.all_composite_tasks:
+        for comp in self.manager.all_proccess_tasks:
             for step in comp.steps:
                 tasks.append(step)
 
         self.table.setRowCount(len(tasks))
         self.table.setColumnCount(7)  # ✅ 열 개수 증가
 
-        headers = ["Composite ID", "Task ID", "Type", "Robot Type", "Robot", "Status", "Location"]
+        headers = ["proccess ID", "Task ID", "Type", "Robot Type", "Robot", "Status", "Location"]
         self.table.setHorizontalHeaderLabels(headers)
 
         for row, task in enumerate(tasks):
-            composite_id = next((c.task_id for c in self.manager.all_composite_tasks if task in c.steps), "")
-            self.table.setItem(row, 0, QTableWidgetItem(composite_id))
+            proccess_id = next((c.task_id for c in self.manager.all_proccess_tasks if task in c.steps), "")
+            self.table.setItem(row, 0, QTableWidgetItem(proccess_id))
             self.table.setItem(row, 1, QTableWidgetItem(str(task.task_id)))
             self.table.setItem(row, 2, QTableWidgetItem(task.task_type.name))
             self.table.setItem(row, 3, QTableWidgetItem(task.robot_type.name))  # ✅ Robot Type 열
@@ -310,36 +310,3 @@ if __name__ == "__main__":
     win = TaskManagerUI(manager)
     win.show()
     app.exec()
-
-# if __name__ == "__main__":
-#     tm = TaskManager()
-
-#     print("\n🧪 입고 작업 테스트 시작")
-
-#     inbound1 = create_inbound_task("inbound_001", start_pos=(2, 2), display_pos=(6, 6))
-#     tm.add_composite_task(inbound1)
-
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # 모바일로봇 MOVE 완료
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(2))  # 로봇팔 PICK 완료
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # 모바일로봇 MOVE 완료
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # WAIT_USER 완료
-
-
-#     print("\n🧪 출고 작업 테스트 시작")
-#     outbound1 = create_outbound_task("outbound_001", pick_pos=(3, 3), drop_pos=(9, 9))
-#     tm.add_composite_task(outbound1)
-
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # mobile MOVE 완료
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # wait_user 완료
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # mobile MOVE to 출고장
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(2))  # arm unload
-#     print(tm.assign_tasks())
-#     print(tm.complete_task(1))  # finalize → idle 전환

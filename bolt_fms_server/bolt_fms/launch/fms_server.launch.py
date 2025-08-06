@@ -32,11 +32,11 @@ def generate_launch_description():
         #     executable='traffic_manager_node',
         #     name='traffic_manager'
         # ),
-        # Node(
-        #     package='bolt_fms',
-        #     executable='qtmonitor_tag_tracker.py',
-        #     name='qtmonitor_tag_tracker',
-        # ),
+        Node(
+            package='bolt_fms',
+            executable='qtmonitor_tag_tracker.py',
+            name='qtmonitor_tag_tracker',
+        ),
         # Node(
         #     package='bolt_fms',
         #     executable='monitoring_manager_node',
@@ -44,8 +44,8 @@ def generate_launch_description():
         # ),
         Node(
             package='bolt_fms',
-            executable='robot_status_manager',
-            name='robot_status_manager'
+            executable='bolt_fms_core',
+            name='bolt_fms_core'
         ),
         # domain_bridge 노드는 ExecuteProcess로 실행해야 함
         ExecuteProcess(
