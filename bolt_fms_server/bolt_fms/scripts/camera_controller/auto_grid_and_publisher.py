@@ -30,7 +30,7 @@ horizontal_divisions = ROWS - 1
 vertical_divisions = COLS - 1
 
 # === ROS 노드 클래스 ===
-class PeriodicInitialPosePublisher(Node):
+class RobotPosePublisher(Node):
     def __init__(self, get_pose_func, publish_period=5.0):
         super().__init__('camera_pose_publisher')
         self.pub = self.create_publisher(PoseStamped, '/camera_pose', 10)
@@ -264,7 +264,7 @@ def main():
     while(True):
         if webcam_thread.get_pose() is not None:
             # ROS 노드 생성 시 get_pose_func을 전달
-            ros_node = PeriodicInitialPosePublisher(get_pose_func=(webcam_thread.get_transed_pose), publish_period=0.03)
+            ros_node = RobotPosePublisher(get_pose_func=(webcam_thread.get_transed_pose), publish_period=0.03)
             break
 
     try:

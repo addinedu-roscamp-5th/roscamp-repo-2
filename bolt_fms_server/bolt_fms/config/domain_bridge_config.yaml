@@ -1,7 +1,6 @@
 # Name of the domain bridge, used for node naming and logging
 name: my_bridge
 
-from_domain: 0
 
 topics:
 
@@ -9,13 +8,13 @@ topics:
 # battery topics --------------------------------
   pinky_battery_present:
     type: std_msgs/msg/Float32
-    from_domain: 151
+    from_domain: 31
     to_domain: 0
     remap: robot1/battery
 
   pinky_battery_present:
     type: std_msgs/msg/Float32
-    from_domain: 35
+    from_domain: 32
     to_domain: 0
     remap: robot2/battery
 
@@ -29,13 +28,13 @@ topics:
   robot1/camera_pose:
     type: geometry_msgs/msg/PoseStamped
     from_domain: 0
-    to_domain: 151
+    to_domain: 31
     remap: camera_pose
 
   robot2/camera_pose:
     type: geometry_msgs/msg/PoseStamped
     from_domain: 0
-    to_domain: 35
+    to_domain: 32
     remap: camera_pose
 
   robot3/camera_pose:
@@ -44,30 +43,75 @@ topics:
     to_domain: 33
     remap: camera_pose
 
+# camera_pose topics ----------------------------
+  robot1/cmd_vel:
+    type: geometry_msgs/msg/Twist
+    from_domain: 0
+    to_domain: 31
+    remap: cmd_vel
 
-# target_pose topics ----------------------------
+  robot2/cmd_vel:
+    type: geometry_msgs/msg/Twist
+    from_domain: 0
+    to_domain: 32
+    remap: cmd_vel
+
+  robot3/cmd_vel:
+    type: geometry_msgs/msg/Twist
+    from_domain: 0
+    to_domain: 33
+    remap: cmd_vel
+
+
+# target_pose pub topics ----------------------------
 
   robot1/target_pose:
     type: geometry_msgs/msg/PoseStamped
-    # from_domain: 0
-    to_domain: 151
+    from_domain: 0
+    to_domain: 31
     remap: target_pose
 
   robot2/target_pose:
     type: geometry_msgs/msg/PoseStamped
-    # from_domain: 0
+    from_domain: 0
+    to_domain: 32
+    remap: target_pose
+
+  robot3/target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    from_domain: 0
     to_domain: 33
     remap: target_pose
+# target_pose sub topics ---------------------------
+  target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    from_domain: 0
+    to_domain: 31
+    remap: robot1/target_pose
+
+  target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    from_domain: 0
+    to_domain: 32
+    remap: robot2/target_pose
+
+  target_pose:
+    type: geometry_msgs/msg/PoseStamped
+    from_domain: 0
+    to_domain: 33
+    remap: robot3/target_pose
+
+
 
 # 로봇팔
   joint_states:
     type: sensor_msgs/msg/JointState
-    from_domain: 36
+    from_domain: 34
     to_domain: 0
     remap: robot4/joint_states
 
   joint_states:
     type: sensor_msgs/msg/JointState
-    from_domain: 32
+    from_domain: 35
     to_domain: 0
     remap: robot5/joint_states
