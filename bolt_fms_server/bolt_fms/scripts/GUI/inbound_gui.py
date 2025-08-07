@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QFont
 
-FASTAPI_SERVER_URL = "http://127.0.0.1:8000"
+FASTAPI_SERVER_URL = "http://192.168.0.139:8000"
 
 # ─────────────────────────────────────
 # ROS2 퍼블리셔 노드
