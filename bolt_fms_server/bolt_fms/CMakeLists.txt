@@ -59,8 +59,19 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
+# python 스크립트를 실행 파일로 설치
+install(PROGRAMS
+  scripts/GUI/inbound_gui.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # ❗ msg 디렉토리는 현재 사용 안하므로 제거 또는 주석 처리
 # install(DIRECTORY msg DESTINATION share/${PROJECT_NAME}/msg)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/InboundUpdate.msg"  # 👈 이 줄을 추가하세요!
+)
+
 
 # ─── Python Scripts ────────────────────────────────────────────
 # ⚠ bolt_fms/bolt_fms 구조는 피하세요. scripts/ 디렉토리를 따로 사용 권장

@@ -2,12 +2,16 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from routes import orders
+from routes import orders, inbound, inventory, outbound 
 
 
 app = FastAPI()
 
+# 라우터 등록
 app.include_router(orders.router)
+app.include_router(inbound.router, tags=["Inbound"])
+app.include_router(inventory.router, tags=["Inventory"])
+app.include_router(outbound.router, tags=["Outbound"])
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

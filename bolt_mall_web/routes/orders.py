@@ -6,7 +6,7 @@ from datetime import datetime
 
 router = APIRouter()
 
-# 주문이 들어왔을 때 Orders 테이블에 저장하고, Orders_Item 테이블에 주문 상품들을 저장하는 API
+# 주문이 들어왔을 때 Orders 테이블에 저장하고, Orders_Item 테이블에 주문 상품들을 저장
 c_id = 0  # 임시 고객번호
 @router.post("/orders") # /orders에 POST 요청이 들어오면 실행
 async def create_order(request: Request, db: Session = Depends(get_db)):
@@ -39,7 +39,7 @@ async def create_order(request: Request, db: Session = Depends(get_db)):
 
     return {"status": "success", "order_id": new_order.order_id}
 
-# 주문 상품 조회 API
+# 주문 상품 조회
 @router.get("/orders/{order_id}/items")
 def read_order_item(order_id: int, db: Session = Depends(get_db)):
     # 해당 order_id에 속한 주문 상품들 조회

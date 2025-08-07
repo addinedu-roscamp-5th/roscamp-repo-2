@@ -20,8 +20,9 @@
   <depend>PySide6</depend>
 
   <!-- ✅ 메시지 인터페이스가 제거된 상태라면 아래 2개는 주석 또는 제거 -->
-  <!-- <build_depend>rosidl_default_generators</build_depend> -->
-  <!-- <exec_depend>rosidl_default_runtime</exec_depend> -->
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
   
   <!-- package.xml -->
   <build_depend>nlohmann_json</build_depend>
