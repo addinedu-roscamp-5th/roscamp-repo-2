@@ -1594,8 +1594,8 @@ class GridCameraApp(QWidget):
     def draw_yaw_arrow(self, center, yaw, color):
         """로봇의 yaw 방향을 화살표로 표시"""
         arrow_length = 30
-        arrow_end_x = int(center[0] + arrow_length * math.cos(yaw))
-        arrow_end_y = int(center[1] + arrow_length * math.sin(yaw))
+        arrow_end_x = int(center[0] - arrow_length * math.cos(yaw))
+        arrow_end_y = int(center[1] - arrow_length * math.sin(yaw))
 
         # 메인 화살표 선
         cv2.arrowedLine(

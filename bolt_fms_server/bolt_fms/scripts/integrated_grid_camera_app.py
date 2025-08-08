@@ -243,7 +243,7 @@ def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> Proc
 # ROS2 통신 관련 클래스들
 # ======================================================================
 
-class RobotPosePublisher(Node):
+class RobotStatusPublisher(Node):
     """로봇 위치 정보를 ROS2 토픽으로 발행하는 노드"""
     
     def __init__(self):
@@ -410,33 +410,9 @@ class MultiRobotPathPlanner:
         """장애물 위치 설정"""
         self.obstacles = obstacles.copy()
     
-
-    def set_robot_goal(self, pos):
+    def set_robot_goal(self, robot_id: int, goal: Tuple[int, int]):
         """로봇 목표 설정"""
-        if len(self.corner_points) < 4 or self.setting_goal_for_robot is None:
-            return
-
-        grid_pos = self.pos_to_grid(pos)
-        if grid_pos is None:
-            return
-
-        row, col = grid_pos
-        robot_id = self.setting_goal_for_robot
-
-        # 목표 설정
-        self.robot_goals[robot_id] = (row, col)
-        self.path_planner.set_robot_goal(robot_id, (row, col))
-
-        # UI 업데이트
-        self.setting_goal_for_robot = None
-        self.set_goal_button.setText("목표 설정")
-
-        real_coords = self.grid_to_real_coords(row, col)
-        if real_coords:
-            real_x, real_y = real_coords
-            print(
-                f"🎯 로봇{robot_id} 목표 설정: 그리드({row},{col}) 실제({real_x:.2f},{real_y:.2f})"
-            )
+        self.robot_goals[robot_id] = goal
 
     def is_valid_position(self, row: int, col: int, exclude_robot: int = None) -> bool:
         """유효한 위치인지 확인"""
@@ -644,8 +620,8 @@ class TaskManagerWidget(QWidget):
         layout.addWidget(robot_status_label)
         
         self.robot_status_table = QTableWidget()
-        self.robot_status_table.setColumnCount(4)
-        robot_headers = ["로봇 ID", "타입", "상태", "현재 작업"]
+        self.robot_status_table.setColumnCount(5)
+        robot_headers = ["로봇 ID", "타입", "상태", "현재 작업", "위치"]
         self.robot_status_table.setHorizontalHeaderLabels(robot_headers)
         self.robot_status_table.setMaximumHeight(200)
         layout.addWidget(self.robot_status_table)
@@ -730,7 +706,8 @@ class TaskManagerWidget(QWidget):
             self.robot_status_table.setItem(row, 2, QTableWidgetItem(robot.status.value))
             current_task = robot.current_task.task_id if robot.current_task else "-"
             self.robot_status_table.setItem(row, 3, QTableWidgetItem(current_task))
-            
+            self.robot_status_table.setItem(row, 4, QTableWidgetItem(str(robot.position)))
+
             # 로봇 상태에 따른 색상
             if robot.status == RobotStatus.BUSY:
                 self.robot_status_table.item(row, 2).setBackground(Qt.GlobalColor.yellow)
@@ -977,7 +954,7 @@ class GridCameraWidget(QWidget):
         """ROS2 초기화"""
         try:
             rclpy.init()
-            self.ros_node = RobotPosePublisher()
+            self.ros_node = RobotStatusPublisher()
             if self.ros_status:
                 self.ros_status.setText("ROS2: 연결됨")
             print("✅ ROS2 노드 초기화 완료")
@@ -1233,10 +1210,10 @@ class GridCameraWidget(QWidget):
     def draw_yaw_arrow(self, center, yaw, color):
         """로봇의 yaw 방향을 화살표로 표시"""
         arrow_length = 30
-        arrow_end_x = int(center[0] + arrow_length * math.cos(yaw))
-        arrow_end_y = int(center[1] + arrow_length * math.sin(yaw))
+        arrow_end_x = int(center[0] - arrow_length * math.cos(yaw))
+        arrow_end_y = int(center[1] - arrow_length * math.sin(yaw))
 
-        # 메인 화살표 선
+     # 메인 화살표 선
         cv2.arrowedLine(
             self.current_frame,
             tuple(center),
@@ -1412,7 +1389,7 @@ class GridCameraWidget(QWidget):
                             line_color,
                             2,
                         )
-                        
+
     def grid_to_real_coords(self, row, col):
         """그리드 좌표를 실제 좌표로 변환"""
         real_x = (col + 0.5) * self.real_width / self.grid_cols
@@ -1616,57 +1593,31 @@ class GridCameraWidget(QWidget):
         self.image_label.setPixmap(scaled_pixmap)
     
     def set_robot_goal(self, pos):
-
         """로봇 목표 설정"""
-
         if len(self.corner_points) < 4 or self.setting_goal_for_robot is None:
-
             return
-
-
 
         grid_pos = self.pos_to_grid(pos)
-
         if grid_pos is None:
-
             return
 
-
-
         row, col = grid_pos
-
         robot_id = self.setting_goal_for_robot
 
-
-
         # 목표 설정
-
         self.robot_goals[robot_id] = (row, col)
-
         self.path_planner.set_robot_goal(robot_id, (row, col))
 
-
-
         # UI 업데이트
-
         self.setting_goal_for_robot = None
-
         self.set_goal_button.setText("목표 설정")
 
-
-
         real_coords = self.grid_to_real_coords(row, col)
-
         if real_coords:
-
             real_x, real_y = real_coords
-
             print(
-
                 f"🎯 로봇{robot_id} 목표 설정: 그리드({row},{col}) 실제({real_x:.2f},{real_y:.2f})"
-
             )
-
 
     
     def handle_mouse_click(self, pos):
@@ -2140,7 +2091,7 @@ class GridCameraWidget(QWidget):
 
         # 경로 계획자 설정
         self.path_planner.set_obstacles(self.obstacles)
-        self.path_planner.set_robot_goal(robot_id, target_grid)
+        self.path_planner.set_robot_goal(target_grid)
 
         # 단일 로봇에 대한 경로 계획
         planned_paths = self.path_planner.plan_multi_robot_paths({robot_id: grid_pos})
@@ -2156,10 +2107,6 @@ class GridCameraWidget(QWidget):
                 self.publish_path_as_waypoints(robot_id, planned_paths[robot_id])
         else:
             print(f"⚠️ 로봇{robot_id} 웨이포인트 경로를 찾을 수 없습니다.")
-
-    def pos_to_grid(self, pos):
-        """이미지 좌표를 그리드 좌표로 변환"""
-        return (0, 0)  # 더미 구현
     
     def image_to_real_coords(self, x, y):
         """이미지 좌표를 실제 좌표로 변환"""
