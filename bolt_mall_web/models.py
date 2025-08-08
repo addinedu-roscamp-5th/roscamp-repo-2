@@ -28,10 +28,10 @@ class Rack(Base):
     __tablename__ = "Rack"
 
     rack = Column(Integer, primary_key=True, nullable=False)
-    x_start = Column(Integer, nullable=False)
-    x_end = Column(Integer, nullable=False)
-    y_start = Column(Integer, nullable=False)
-    y_end = Column(Integer, nullable=False)
+    x_start = Column(DECIMAL(10, 2), nullable=False)
+    x_end = Column(DECIMAL(10, 2), nullable=False)
+    y_start = Column(DECIMAL(10, 2), nullable=False)
+    y_end = Column(DECIMAL(10, 2), nullable=False)
     cell_size = Column(Integer, nullable=False)
 
     __table_args__ = (
