@@ -35,8 +35,8 @@ from builtin_interfaces.msg import Time
 
 # 로봇 ID와 AprilTag ID 매핑
 ROBOT_CONFIG = {
-    2: 4,  
-    3: 2,  
+    1: 4,  
+    2: 2,  
 }
 
 
@@ -73,7 +73,7 @@ class RobotStatus(Enum):
 
 
 class Task:
-    def __init__(self, task_id, task_type: TaskType, robot_type: RobotType, location, priority=1):
+    def __init__(self, task_id, task_type: TaskType, robot_type: RobotType, location=None, priority=1):
         self.task_id = task_id
         self.task_type = task_type
         self.robot_type = robot_type
@@ -133,7 +133,7 @@ class TaskManager:
         }
         self.db = None
 
-    def create_inbound_tasks(self, item_id, ib_id, total_amount, batch_size=2):
+    def create_inbound_tasks(self, process_id, total_amount, batch_size=2):
         """
         입고 수량(total_amount)을 batch_size 개씩 나누어
         move → load 순서로 반복되는 작업 목록을 생성.
@@ -142,28 +142,15 @@ class TaskManager:
         """
         tasks = []
         remaining = total_amount
-
         while remaining > 0:
             current_batch = min(batch_size, remaining)  # 이번 작업에 처리할 수량
-            # move 작업
-            tasks.append({
-                "task_type": "MOVE",
-                "item_id": item_id,
-                "ib_id": ib_id,
-                "amount": current_batch,
-                "status": "PENDING"
-            })
-            # load 작업
-            tasks.append({
-                "task_type": "LOAD",
-                "item_id": item_id,
-                "ib_id": ib_id,
-                "amount": current_batch,
-                "status": "PENDING"
-            })
+            tasks.append(Task(f"{process_id} 입고<-호출", TaskType.MOVE, RobotType.MOBILE, (0.1,0.1))) # 입고 위치 (0.1,0.1)
+            tasks.append(Task(f"{process_id} 입고->적재", TaskType.LOAD, RobotType.ARM, (0.2,0.2)))    # 입고에서 핑키 위치 (0.2,0.2)
+            tasks.append(Task(f"{process_id} 입고->진열", TaskType.MOVE, RobotType.MOBILE, (1,0.5)))   # 진열 위치 (가능한 location)
             remaining -= current_batch
-
-        return tasks
+            
+        tasks.append(Task(f"{process_id} 진열->작업자{i}", TaskType.WAIT_USER, RobotType.MOBILE, (1,0.5))) # 기본적으로 진열 위치이고 작업자가 진열한 위치가 베스트
+        return ProcessTask(process_id, tasks)
 
     def add_process_task(self, process: ProcessTask):
         self.all_process_tasks.append(process)
@@ -671,13 +658,13 @@ class MultiRobotPathPlanner:
 # ======================================================================
 # 작업 관리 UI 위젯
 # ======================================================================
-def create_inbound_task(process_id, start_pos=(1, 1), display_pos=(5, 5)):
+def create_inbound_task(process_id, target_pos=(0,0)):
     """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
     steps = [
-        Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, start_pos),
-        Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, start_pos),
-        Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, display_pos),
-        Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, display_pos)
+        Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, target_pos),
+        Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, target_pos),
+        Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, target_pos),
+        Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, target_pos)
     ]
     return ProcessTask(process_id, steps)
 
@@ -1201,12 +1188,41 @@ class GridCameraWidget(QWidget):
         
         # 로봇 위치 리스트 업데이트
         self.update_robot_list()
+
+        # 콘솔에 로봇 위치 출력
+        self.print_robot_positions()
         
         # ROS2 토픽으로 발행
         self.publish_robot_positions()
         
         # 웨이포인트 업데이트
         self.update_waypoint_following()
+
+    def print_robot_positions(self):
+        """콘솔에 로봇 위치 출력"""
+        if self.robot_positions:
+            for robot_id in sorted(self.robot_positions.keys()):
+                robot_data = self.robot_positions[robot_id]
+                grid_pos = robot_data["grid_pos"]
+                real_coords = robot_data["real_coords"]
+                tag_id = robot_data["tag_id"]
+                yaw = robot_data["yaw"]
+
+                if grid_pos and real_coords:
+                    row, col = grid_pos
+                    real_x, real_y = real_coords
+                    print(
+                        f"🤖 로봇{robot_id} (태그{tag_id}): 그리드({row},{col}) 실제({real_x:.3f},{real_y:.3f}) yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°)"
+                    )
+                elif grid_pos:
+                    row, col = grid_pos
+                    print(
+                        f"🤖 로봇{robot_id} (태그{tag_id}): 그리드({row},{col}) yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°) - 그리드 미설정"
+                    )
+                else:
+                    print(
+                        f"🤖 로봇{robot_id} (태그{tag_id}): yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°) 그리드 범위 외부"
+                    )
     
     # 간단한 메서드들만 포함 (공간 절약을 위해)
     def toggle_apriltag(self, state):

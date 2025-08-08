@@ -82,6 +82,7 @@ topics:
     from_domain: 0
     to_domain: 33
     remap: target_pose
+    
 # target_pose sub topics ---------------------------
   target_pose:
     type: geometry_msgs/msg/PoseStamped
