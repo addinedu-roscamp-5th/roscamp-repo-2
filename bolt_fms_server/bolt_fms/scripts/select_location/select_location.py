@@ -54,7 +54,7 @@ def get_robot_coordinates(db: Session, location_id: int) -> tuple[float, float] 
     # col_num과 cell_size를 활용하여 y 좌표 계산
     y_col_offset = float(location.col_num - 1) * float(rack.cell_size)
     y_offset = 4
-    y_coord = float(rack.y_start) + y_col_offset + 4 # y 좌표는 col_num에 따라 계산 + 4cm (중간으로 이동)
+    y_coord = float(rack.y_start) + y_col_offset + y_offset # y 좌표는 col_num에 따라 계산 + 4cm (중간으로 이동)
 
     # 랙의 방향에 따라 x 좌표 계산
     x_diff = float(rack.x_start) - float(rack.x_end) 
