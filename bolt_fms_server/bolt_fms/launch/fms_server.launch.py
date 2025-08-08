@@ -50,7 +50,9 @@ def generate_launch_description():
         Node(
             package='bolt_fms',
             executable='integrated_grid_camera_app.py',
-            name='integrated_grid_camera_app'
+            name='integrated_grid_camera_app',
+            output='screen',          # <- 화면에 출력
+            emulate_tty=True,         # 버퍼링 방지
         ),
         # domain_bridge 노드는 ExecuteProcess로 실행해야 함
         ExecuteProcess(

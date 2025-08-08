@@ -39,6 +39,7 @@ ROBOT_CONFIG = {
     3: 2,  
 }
 
+
 # ======================================================================
 # 작업 관리 시스템 클래스들
 # ======================================================================
@@ -130,6 +131,39 @@ class TaskManager:
             4: TaskRobot(4, RobotType.ARM, (3, 10)),
             5: TaskRobot(5, RobotType.ARM, (3, 2)),
         }
+        self.db = None
+
+    def create_inbound_tasks(self, item_id, ib_id, total_amount, batch_size=2):
+        """
+        입고 수량(total_amount)을 batch_size 개씩 나누어
+        move → load 순서로 반복되는 작업 목록을 생성.
+
+        예: total_amount=5, batch_size=2 → [move(2), load(2), move(2), load(2), move(1), load(1)]
+        """
+        tasks = []
+        remaining = total_amount
+
+        while remaining > 0:
+            current_batch = min(batch_size, remaining)  # 이번 작업에 처리할 수량
+            # move 작업
+            tasks.append({
+                "task_type": "MOVE",
+                "item_id": item_id,
+                "ib_id": ib_id,
+                "amount": current_batch,
+                "status": "PENDING"
+            })
+            # load 작업
+            tasks.append({
+                "task_type": "LOAD",
+                "item_id": item_id,
+                "ib_id": ib_id,
+                "amount": current_batch,
+                "status": "PENDING"
+            })
+            remaining -= current_batch
+
+        return tasks
 
     def add_process_task(self, process: ProcessTask):
         self.all_process_tasks.append(process)
@@ -217,31 +251,130 @@ class TaskManager:
         return f"✅ Task {task.task_id} completed by Robot {robot_id}"
 
 
-def create_inbound_task(process_id, start_pos=(1, 1), display_pos=(5, 5)):
-    """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
-    steps = [
-        Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, start_pos),
-        Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, start_pos),
-        Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, display_pos),
-        Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, display_pos)
-    ]
-    return ProcessTask(process_id, steps)
+from datetime import datetime
+import requests
 
+FASTAPI_SERVER_URL = "http://192.168.0.139:8000"
 
-def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> ProcessTask:
-    """출고 작업 생성: 물건을 픽업해서 배송하는 작업"""
-    steps = [
-        Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
-        Task(f"{process_id}_2", TaskType.WAIT_USER, RobotType.MOBILE, pick_pos, priority=1),
-        Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
-        Task(f"{process_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
-    ]
-    return ProcessTask(process_id, steps)
+class DBManager:
+    def __init__(self, base_url=FASTAPI_SERVER_URL):
+        self.base_url = base_url.rstrip("/")
+        self.session = requests.Session()  # 커넥션 재사용
 
+    def get(self, endpoint, params=None, timeout=3):
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        resp = self.session.get(url, params=params, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get(self, endpoint, params=None):
+        """GET 요청 - 데이터 조회"""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            resp = requests.get(url, params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            print(f"[DBManager] GET 요청 실패: {e}")
+            return None
+
+    def post(self, endpoint, data=None):
+        """POST 요청 - 데이터 생성"""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            resp = requests.post(url, json=data)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            print(f"[DBManager] POST 요청 실패: {e}")
+            return None
+
+    def put(self, endpoint, data=None):
+        """PUT 요청 - 데이터 수정"""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            resp = requests.put(url, json=data)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            print(f"[DBManager] PUT 요청 실패: {e}")
+            return None
+
+    def delete(self, endpoint):
+        """DELETE 요청 - 데이터 삭제"""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            resp = requests.delete(url)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            print(f"[DBManager] DELETE 요청 실패: {e}")
+            return None
+        
+# 2) DBWatcher: Qt 타이머로 폴링 + 변경 감지 + 시그널
+from PySide6.QtCore import QObject, QTimer, Signal
+from datetime import datetime
+
+class DBWatcher(QObject):
+    inbound_updated = Signal(list)   # 새로 추가된 inbound 레코드 목록을 전달
+
+    def __init__(self, db: DBManager, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._poll)
+        self.last_seen_dttm = None   # 마지막으로 본 시각 (ISO string)
+        self.last_seen_id = None     # 또는 마지막 ID (정수)
+
+    def start(self, interval_ms=2000):
+        self.timer.start(interval_ms)
+
+    def stop(self):
+        self.timer.stop()
+
+    def _poll(self):
+        # 예: /inbound에서 전체 리스트를 받아온다고 가정
+        rows = self.db.get("/inbounds")
+        if not rows or not isinstance(rows, list):
+            return
+
+        # 최신 시각/ID 계산
+        try:
+            latest = max(rows, key=lambda r: datetime.fromisoformat(r['ib_dttm']))
+        except Exception:
+            return
+
+        # 초기화 (첫 호출 시 기준만 세팅, 알림은 안 보냄)
+        if self.last_seen_dttm is None:
+            self.last_seen_dttm = latest['ib_dttm']
+            self.last_seen_id = latest.get('ib_id')
+            return
+
+        # 새 데이터 필터링: 마지막 본 시간 이후인 것만
+        new_rows = []
+        try:
+            last_dt = datetime.fromisoformat(self.last_seen_dttm)
+            for r in rows:
+                if datetime.fromisoformat(r['ib_dttm']) > last_dt:
+                    new_rows.append(r)
+        except Exception:
+            new_rows = []
+
+        if new_rows:
+            # 정렬해서 넘겨주면 사용하기 편함 (오래된→최신)
+            new_rows.sort(key=lambda r: r['ib_dttm'])
+            # 상태 업데이트(가장 최신으로)
+            newest = max(new_rows, key=lambda r: r['ib_dttm'])
+            self.last_seen_dttm = newest['ib_dttm']
+            self.last_seen_id = newest.get('ib_id')
+            # 시그널 발행
+            self.inbound_updated.emit(new_rows)
 
 # ======================================================================
 # ROS2 통신 관련 클래스들
 # ======================================================================
+
+
 
 class RobotStatusPublisher(Node):
     """로봇 위치 정보를 ROS2 토픽으로 발행하는 노드"""
@@ -538,16 +671,36 @@ class MultiRobotPathPlanner:
 # ======================================================================
 # 작업 관리 UI 위젯
 # ======================================================================
+def create_inbound_task(process_id, start_pos=(1, 1), display_pos=(5, 5)):
+    """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
+    steps = [
+        Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, start_pos),
+        Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, start_pos),
+        Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, display_pos),
+        Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, display_pos)
+    ]
+    return ProcessTask(process_id, steps)
+
+
+def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> ProcessTask:
+    """출고 작업 생성: 물건을 픽업해서 배송하는 작업"""
+    steps = [
+        Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
+        Task(f"{process_id}_2", TaskType.WAIT_USER, RobotType.MOBILE, pick_pos, priority=1),
+        Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
+        Task(f"{process_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
+    ]
+    return ProcessTask(process_id, steps)
 
 class TaskManagerWidget(QWidget):
     """작업 관리 페이지 위젯"""
     
-    def __init__(self):
+    def __init__(self, task_manager):
         super().__init__()
-        self.manager = TaskManager()
+        self.manager = task_manager
         self.counter = 1
         self.init_ui()
-    
+
     def init_ui(self):
         """작업 관리 UI 초기화"""
         layout = QVBoxLayout()
@@ -640,6 +793,9 @@ class TaskManagerWidget(QWidget):
     def add_inbound(self):
         """입고 작업 추가"""
         task = create_inbound_task(f"입고_{self.counter}")
+        if task is None:
+            print("입고 실패")
+            return 
         self.manager.add_process_task(task)
         self.add_log(f"➕ 입고 작업 {task.task_id} 추가됨")
         self.counter += 1
@@ -727,7 +883,6 @@ class GridCameraWidget(QWidget):
         
         # ROS2 초기화 (UI 초기화 전에 수행)
         self.ros_node = None
-        
         # === 설정 값 ===
         self.camera_index = 2
         self.grid_rows = 10
@@ -2146,21 +2301,49 @@ class IntegratedGridCameraApp(QWidget):
         super().__init__()
         self.setWindowTitle("🤖 통합 로봇 관리 시스템")
         self.setGeometry(100, 100, 1400, 900)
-        
+        self.db = DBManager()
+        self.task_manager = TaskManager()
         self.init_ui()
-    
+
+        # DBWatcher 생성
+        self.db_watcher = DBWatcher(self.db, parent=self)
+        self.db_watcher.inbound_updated.connect(self.on_inbound_updated)
+        self.db_watcher.start(interval_ms=2000)  # 2초 주기 폴링
+
+    def on_inbound_updated(self, rows):
+        rows = self.db.get('inbounds')
+        latest = max(rows, key=lambda x: datetime.fromisoformat(x['ib_dttm']))
+        item_id = latest['item_id']
+        amount = latest['item_amount']
+        ib_id = latest['ib_id']
+
+        print(f"[입고 감지] 등록: item_id={item_id} amount={amount} ib_id={ib_id}")
+
+        # ✅ 입고 작업 생성
+        tasks = self.task_manager.create_inbound_tasks(item_id, ib_id, amount, batch_size=2)
+
+        # TaskManager에 등록
+        for task in tasks:
+            self.task_manager.add_task(task)
+            print(f"  → 작업 생성: {task}")
+
+
     def init_ui(self):
         """메인 UI 초기화"""
         layout = QVBoxLayout()
         # 탭 위젯 생성
         self.tab_widget = QTabWidget()
-        
+
+        # ✅ 전역 DBWatcher 1회 구동
+        self.db_watcher = DBWatcher(self)
+        self.db_watcher.start(interval_ms=2000)
+
         # 탭 1: 그리드 카메라 페이지
         self.camera_widget = GridCameraWidget()
         self.tab_widget.addTab(self.camera_widget, "📹 카메라 및 로봇 제어")
         
         # 탭 2: 작업 관리 페이지
-        self.task_widget = TaskManagerWidget()
+        self.task_widget = TaskManagerWidget(self.task_manager)
         self.tab_widget.addTab(self.task_widget, "📋 작업 스케줄 관리")
         
         layout.addWidget(self.tab_widget)
@@ -2178,6 +2361,7 @@ class IntegratedGridCameraApp(QWidget):
             self.camera_widget.ros_node.destroy_node()
         try:
             rclpy.shutdown()
+            self.db_watcher.stop()
         except:
             pass
         
