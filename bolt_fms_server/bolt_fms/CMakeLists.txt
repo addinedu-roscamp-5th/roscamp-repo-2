@@ -79,7 +79,6 @@ install(PROGRAMS
   # scripts/qtmonitor_tag_tracker.py
   scripts/grid_camera_app.py
   scripts/integrated_grid_camera_app.py
-  scripts/robot_controller.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
