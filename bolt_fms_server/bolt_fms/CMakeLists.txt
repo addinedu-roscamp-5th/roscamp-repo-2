@@ -77,9 +77,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 # ⚠ bolt_fms/bolt_fms 구조는 피하세요. scripts/ 디렉토리를 따로 사용 권장
 install(PROGRAMS
   # scripts/qtmonitor_tag_tracker.py
-  scripts/qtmonitor_camera_controller.py
-  scripts/apriltag_robot_controller.py
-  scripts/warehouse_automation_system.py
+  scripts/grid_camera_app.py
+  scripts/integrated_grid_camera_app.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
