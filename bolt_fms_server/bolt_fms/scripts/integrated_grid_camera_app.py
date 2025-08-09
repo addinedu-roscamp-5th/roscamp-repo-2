@@ -345,7 +345,7 @@ import requests
 
 class DBManager:
     def __init__(
-        self, base_url: str = "http://127.0.0.1:8000", default_timeout: float = 2.0
+        self, base_url: str = "http://192.168.0.139:8000", default_timeout: float = 2.0
     ):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
@@ -599,11 +599,11 @@ class RobotStatusPublisher(Node):
         pose_msg.pose.position.z = 0.0
 
         # Orientation 설정
-        quat = self.euler_to_quaternion(0, 0, target_yaw)
-        pose_msg.pose.orientation.x = quat[0]
-        pose_msg.pose.orientation.y = quat[1]
-        pose_msg.pose.orientation.z = quat[2]
-        pose_msg.pose.orientation.w = quat[3]
+        qx, qy, qz, qw = self.euler_to_quaternion(0.0, 0.0, float(target_yaw))
+        pose_msg.pose.orientation.x = qx
+        pose_msg.pose.orientation.y = qy
+        pose_msg.pose.orientation.z = qz
+        pose_msg.pose.orientation.w = qw
 
         # 메시지 발행
         self.target_pose_publishers[robot_id].publish(pose_msg)
@@ -611,26 +611,26 @@ class RobotStatusPublisher(Node):
             f"Published target pose for robot{robot_id}: ({target_x:.2f}, {target_y:.2f})"
         )
 
-    def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
-        """로봇 속도 제어 명령 발행"""
-        if robot_id not in self.cmd_vel_publishers:
-            return
+    # def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
+    #     """로봇 속도 제어 명령 발행"""
+    #     if robot_id not in self.cmd_vel_publishers:
+    #         return
 
-        # Twist 메시지 생성
-        twist_msg = Twist()
-        twist_msg.linear.x = float(linear_x)
-        twist_msg.linear.y = float(linear_y)
-        twist_msg.linear.z = 0.0
-        twist_msg.angular.x = 0.0
-        twist_msg.angular.y = 0.0
-        twist_msg.angular.z = float(angular_z)
+    #     # Twist 메시지 생성
+    #     twist_msg = Twist()
+    #     twist_msg.linear.x = float(linear_x)
+    #     twist_msg.linear.y = float(linear_y)
+    #     twist_msg.linear.z = 0.0
+    #     twist_msg.angular.x = 0.0
+    #     twist_msg.angular.y = 0.0
+    #     twist_msg.angular.z = float(angular_z)
 
-        # 메시지 발행
-        self.cmd_vel_publishers[robot_id].publish(twist_msg)
+    #     # 메시지 발행
+    #     self.cmd_vel_publishers[robot_id].publish(twist_msg)
 
-    def stop_robot(self, robot_id):
-        """로봇 정지"""
-        self.publish_cmd_vel(robot_id, 0.0, 0.0, 0.0)
+    # def stop_robot(self, robot_id):
+    #     """로봇 정지"""
+    #     self.publish_cmd_vel(robot_id, 0.0, 0.0, 0.0)
 
 
 # ======================================================================
@@ -1690,21 +1690,23 @@ class GridCameraWidget(QWidget):
         if not path_waypoints:
             return
 
+        # ✅ 웨이포인트 리스트 저장 + 인덱스 초기화 추가
+        self.robot_waypoints[robot_id] = path_waypoints
+        self.robot_current_waypoint_index[robot_id] = 0
+        self.robot_target_published[robot_id] = False
+        self.update_waypoint_list()
+
         # 첫 번째 경로 포인트를 즉시 발행
         first_waypoint = path_waypoints[0]
-        self.ros_node.publish_target_pose(
-            robot_id, first_waypoint[0], first_waypoint[1]
-        )
+        # 현재 로봇의 실제 좌표가 있으면 방향 계산
+        target_yaw = 0.0
+        if robot_id in self.robot_positions and self.robot_positions[robot_id].get("real_coords"):
+            rx, ry = self.robot_positions[robot_id]["real_coords"]
+            dx = first_waypoint[0] + rx
+            dy = first_waypoint[1] + ry
+            target_yaw = 2 * math.atan2(dy, dx)
 
-        # 나머지 경로 포인트들을 로봇 경로 시스템에 저장
-        if len(path_waypoints) > 1:
-            # 기존 웨이포인트를 경로 기반으로 업데이트
-            remaining_waypoints = path_waypoints[1:]
-            print(
-                f"📍 로봇{robot_id} A* 경로 기반 웨이포인트 {len(remaining_waypoints)}개 추가 대기"
-            )
-
-        # 목표 발행 상태 업데이트
+        self.ros_node.publish_target_pose(robot_id, first_waypoint[0], first_waypoint[1], target_yaw)
         self.robot_target_published[robot_id] = True
 
     def draw_waypoints(self):
@@ -2131,6 +2133,7 @@ class GridCameraWidget(QWidget):
             u, v = transformed[0][0]
             row = int(v * self.grid_rows)
             col = int(u * self.grid_cols)
+            print(row, col)
 
             if 0 <= row < self.grid_rows and 0 <= col < self.grid_cols:
                 return (row, col)
@@ -2482,7 +2485,7 @@ class GridCameraWidget(QWidget):
 
         # 경로 계획자 설정
         self.path_planner.set_obstacles(self.obstacles)
-        self.path_planner.set_robot_goal(target_grid)
+        self.path_planner.set_robot_goal(robot_id, target_grid)
 
         # 단일 로봇에 대한 경로 계획
         planned_paths = self.path_planner.plan_multi_robot_paths({robot_id: grid_pos})

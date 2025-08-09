@@ -6,3 +6,4 @@ PySide6
 matplotlib
 catkin_pkg
 requests
+empy==3.3.4 
