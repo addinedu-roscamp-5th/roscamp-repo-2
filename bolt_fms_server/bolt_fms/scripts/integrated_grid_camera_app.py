@@ -138,12 +138,13 @@ class ProcessTask:
         return self.assigned_mobile_robot_id == robot_id and not self.is_done()
 
 
-class TaskRobot:
-    def __init__(self, robot_id, robot_type: RobotType, position=(0, 0)):
+class Robot:
+    def __init__(self, robot_id, robot_type: RobotType, position=(0, 0), target_pos=None):
         self.id = robot_id
         self.robot_type = robot_type
         self.status = RobotStatus.IDLE
         self.position = position
+        self.target_pos = self.position
         self.current_task: Task = None
 
     def is_available(self):
@@ -164,16 +165,17 @@ class TaskManager:
         self.task_queue = PriorityQueue()
         self.all_process_tasks: list[ProcessTask] = []
         self.robots = {
-            1: TaskRobot(1, RobotType.MOBILE, (0, 0)),
-            2: TaskRobot(2, RobotType.MOBILE, (10, 10)),
-            3: TaskRobot(3, RobotType.MOBILE, (20, 10)),
-            4: TaskRobot(4, RobotType.ARM, (3, 10)),
-            5: TaskRobot(5, RobotType.ARM, (3, 2)),
+            1: Robot(1, RobotType.MOBILE, (0, 0)),
+            2: Robot(2, RobotType.MOBILE, (10, 10)),
+            3: Robot(3, RobotType.MOBILE, (20, 10)),
+            4: Robot(4, RobotType.ARM, (3, 10)),
+            5: Robot(5, RobotType.ARM, (3, 2)),
         }
         self.db = None
         # 초기화 시 한 번
         self.seen_inbound_ids = set()
         self.seen_outbound_ids = set()
+        self.on_task_assigned = None  # type: Optional[Callable[[Task, Robot, Optional[ProcessTask]], None]]
 
     # def create_inbound_tasks(self, process_id, total_amount, batch_size=2):
     #     """
@@ -289,6 +291,7 @@ class TaskManager:
 
         self.add_process_task(process)  # 기존 큐 등록 함수
 
+    
 
     def add_process_task(self, process: ProcessTask):
         self.all_process_tasks.append(process)
@@ -306,17 +309,13 @@ class TaskManager:
             # process task 찾기
             process = next((c for c in self.all_process_tasks if task in c.steps), None)
 
-            if (
-                process
-                and task.robot_type == RobotType.MOBILE
-                and process.assigned_mobile_robot_id
-            ):
+            if (process and task.robot_type == RobotType.MOBILE and process.assigned_mobile_robot_id):
                 # mobile 작업이면서 이미 로봇이 지정된 경우 해당 로봇 강제 사용
                 robot = self.robots.get(process.assigned_mobile_robot_id)
                 if robot and robot.is_available():
                     assigned = True
                 else:
-                    robot = None  # 지정 로봇이 사용불가면 할당 보류
+                    robot = None  # 지정 로봇이 사용불가면 할당  보류
             else:
                 robot = self.select_robot(task)
 
@@ -327,21 +326,21 @@ class TaskManager:
                 robot.current_task = task
 
                 # 처음 할당된 mobile 로봇 기억
-                if (
-                    task.robot_type == RobotType.MOBILE
-                    and process
-                    and not process.assigned_mobile_robot_id
-                ):
+                if (task.robot_type == RobotType.MOBILE and process and not process.assigned_mobile_robot_id):
                     process.assigned_mobile_robot_id = robot.id
 
-                messages.append(
-                    f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}"
-                )
+                messages.append(f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}")
+
+                if callable(self.on_task_assigned):
+                    try:
+                        self.on_task_assigned(task, robot, process)
+                    except Exception as e:
+                        print(f"[TaskManager] plan hook error: {e}")
+                        
             else:
-                messages.append(
-                    f"⏸ No robot available for Task {task.task_id} ({task.robot_type.name})"
-                )
+                messages.append(f"⏸ No robot available for Task {task.task_id} ({task.robot_type.name})")
                 new_queue.put((task.priority, time.time(), task))
+
 
         self.task_queue = new_queue
         return "\n".join(messages)
@@ -693,7 +692,7 @@ class RobotStatusPublisher(Node):
 
         # 메시지 발행
         self.target_pose_publishers[robot_id].publish(pose_msg)
-        self.get_logger().info(f"types: x={type(target_x)}, y={type(target_y)}, yaw={type(target_yaw)}")
+        # self.get_logger().info(f"types: x={type(target_x)}, y={type(target_y)}, yaw={type(target_yaw)}")
 
 
     # def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
@@ -954,8 +953,13 @@ class TaskManagerWidget(QWidget):
         self.camera = camera  
         self._dispatched = set()          
         self.counter = 1
-        self.init_ui()
+        
+        # 2) 그 다음 훅 등록 (TaskManager에 on_task_assigned가 있어야 함)
+        if hasattr(self.manager, "on_task_assigned"):
+            self.manager.on_task_assigned = self._plan_route_for_assigned_task
 
+        self.init_ui()
+        
     def init_ui(self):
         """작업 관리 UI 초기화"""
         layout = QVBoxLayout()
@@ -992,7 +996,7 @@ class TaskManagerWidget(QWidget):
         button_layout.addWidget(self.btn_add_outbound)
 
         self.btn_assign = QPushButton("🚚 작업 할당 실행")
-        self.btn_assign.clicked.connect(self.assign_tasks)
+        self.btn_assign.clicked.connect(self.auto_assign_tasks)
         self.btn_assign.setStyleSheet(
             "QPushButton { padding: 10px; font-size: 14px; background-color: #4CAF50; color: white; }"
         )
@@ -1054,6 +1058,54 @@ class TaskManagerWidget(QWidget):
 
         # 초기 테이블 업데이트
         self.update_tables()
+        
+    def _plan_route_for_assigned_task(self, task, robot, process):
+        # 모바일 + MOVE + 위치가 있을 때만 경로계획
+        if getattr(task, "task_type", None) != TaskType.MOVE:
+            return
+        if getattr(task, "robot_type", None) != RobotType.MOBILE:
+            return
+        if not getattr(task, "location", None):
+            return
+
+        # 현재 로봇 위치 (카메라 추정 있으면 우선 사용, 없으면 내부 상태)
+        rid = robot.id
+        if hasattr(self.camera, "robot_positions") \
+        and rid in self.camera.robot_positions \
+        and self.camera.robot_positions[rid].get("real_coords"):
+            rx, ry = self.camera.robot_positions[rid]["real_coords"]
+        else:
+            rx, ry = robot.position  # (x,y) 실좌표라고 가정
+
+        tx, ty = task.location  # 목표 실좌표
+
+        # 실좌표 -> 그리드셀 변환
+        def real_to_cell(x, y):
+            rows = self.camera.grid_rows
+            cols = self.camera.grid_cols
+            rw   = self.camera.real_width
+            rh   = self.camera.real_height
+            c = int(max(0, min(cols-1, x / rw * cols)))
+            r = int(max(0, min(rows-1, y / rh * rows)))
+            return (r, c)
+
+        start = real_to_cell(rx, ry)
+        goal  = real_to_cell(tx, ty)
+
+        # A* 경로계획 (기존 플래너 재사용)
+        try:
+            path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
+        except Exception as e:
+            print(f"[Planner] A* failed: {e}")
+            path = None
+
+        # 경로를 태스크에 보관(필요 시)
+        task.planned_path = path
+
+        # (선택) 화면/로봇에 보여주고 싶다면, 이미 있는 함수로 전달
+        if path:
+            self.camera.publish_path_as_waypoints(rid, path)
+
 
     def add_log(self, message):
         """로그 메시지 추가"""
@@ -1083,6 +1135,12 @@ class TaskManagerWidget(QWidget):
     def auto_assign_tasks(self):
         """자동 작업 할당 실행"""
         msg=self.manager.assign_tasks()
+        self.add_log("🚚 자동 작업 할당 실행됨")
+        for line in msg.split("\n"):
+            if line.strip():
+                self.add_log(line)
+        self._plan_and_publish_for_new_assignments()
+        self.update_tables()
 
     def assign_tasks(self):
         """작업 할당 실행"""
@@ -1093,7 +1151,6 @@ class TaskManagerWidget(QWidget):
                 self.add_log(line)
                 
         # ✅ 새로 할당된 모바일 MOVE 작업들을 경로계획하고 발행
-        # self._plan_and_publish_for_new_assignments()
 
         self.update_tables()
         
@@ -1126,8 +1183,7 @@ class TaskManagerWidget(QWidget):
                         continue
 
                     # 현재 로봇 위치(카메라 추정 우선, 없으면 TaskManager의 마지막 위치)
-                    if (rid in getattr(self.camera, "robot_positions", {}) and
-                            self.camera.robot_positions[rid].get("real_coords")):
+                    if (rid in getattr(self.camera, "robot_positions", {}) and self.camera.robot_positions[rid].get("real_coords")):
                         rx, ry = self.camera.robot_positions[rid]["real_coords"]
                     else:
                         rx, ry = self.manager.robots[rid].position
@@ -1156,16 +1212,17 @@ class TaskManagerWidget(QWidget):
                         self.camera.ros_node.publish_target_pose(rid, tx, ty, yaw)
 
                     # ✅ /robot{rid}/task (TaskSimple) 발행
-                    if hasattr(self.camera.ros_node, "publish_task"):
-                        self.camera.ros_node.publish_task(
-                            robot_id=rid,
-                            task_type=t.task_type.value,
-                            x=tx, y=ty, yaw=yaw,
-                            task_id=0  # 간단 모드
-                        )
+                    # if hasattr(self.camera.ros_node, "publish_task"):
+                    #     self.camera.ros_node.publish_task(
+                    #         robot_id=rid,
+                    #         task_type=t.task_type.value,
+                    #         x=tx, y=ty, yaw=yaw,
+                    #         task_id=0  # 간단 모드
+                    #     )
 
                     self._dispatched.add(t.task_id)
                     self.add_log(f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행")
+
 
     def complete_task(self, robot_id):
         """로봇 작업 완료 처리"""
@@ -1294,6 +1351,7 @@ class GridCameraWidget(QWidget):
         self.robot_paths = {}  # 로봇 경로
         self.setting_goal_for_robot = None  # 목표 설정 모드
         self.enable_path_planning = False
+        self._last_plan_log = {}
 
         # === 웨이포인트 관련 ===
         self.robot_waypoints = {}  # 로봇별 웨이포인트 리스트 {robot_id: [(x,y), ...]}
@@ -1608,7 +1666,7 @@ class GridCameraWidget(QWidget):
         self.update_robot_list()
 
         # 콘솔에 로봇 위치 출력
-        self.print_robot_positions()
+        # self.print_robot_positions()
 
         # ROS2 토픽으로 발행
         self.publish_robot_positions()
@@ -1875,8 +1933,7 @@ class GridCameraWidget(QWidget):
     def publish_path_as_waypoints(self, robot_id, path):
         """A* 경로를 순차 웨이포인트로 변환하여 발행"""
         if not self.ros_node or len(path) <= 1:
-            self.get_logger().info(
-                f"로봇 {robot_id} A* 경로 순차 웨이포인트 변환 실패!; no ros or no path"
+            print(f"로봇 {robot_id} A* 경로 순차 웨이포인트 변환 실패!; no ros or no path"
             )
             return
 
@@ -1906,6 +1963,7 @@ class GridCameraWidget(QWidget):
             dy = first_waypoint[1] - ry
             target_yaw = math.atan2(dy, dx)
 
+        print(type(robot_id), type(first_waypoint[0]), type(first_waypoint[1]), type(target_yaw))
         self.ros_node.publish_target_pose(robot_id, first_waypoint[0], first_waypoint[1], target_yaw)
         self.robot_target_published[robot_id] = True
 
@@ -2351,11 +2409,6 @@ class GridCameraWidget(QWidget):
             robot_data = self.robot_positions[robot_id]
             self.robot_list.addItem(f"로봇{robot_id}: 감지됨")
 
-    def update_waypoint_following(self):
-        """웨이포인트 팔로잉 업데이트"""
-        # 실제 구현은 원본 코드와 동일
-        pass
-
     def real_coords_to_grid(self, real_x, real_y):
         """실제 좌표를 그리드 좌표로 변환"""
         if (
@@ -2539,26 +2592,27 @@ class GridCameraWidget(QWidget):
         self.update_obstacle_list()
 
     def set_test_waypoints(self):
-        """테스트용 웨이포인트 설정"""
-        # 로봇 1에 대한 테스트 웨이포인트 (실제 좌표)
-        test_waypoints_robot1 = [
-            (0.5, 0.2),  # 첫 번째 웨이포인트
-            (1.2, 0.3),  # 두 번째 웨이포인트
-            (1.5, 0.7),  # 세 번째 웨이포인트
-            (0.8, 0.8),  # 마지막 웨이포인트
-        ]
+        pass
+    #     """테스트용 웨이포인트 설정"""
+    #     # 로봇 1에 대한 테스트 웨이포인트 (실제 좌표)
+    #     test_waypoints_robot1 = [
+    #         (0.5, 0.2),  # 첫 번째 웨이포인트
+    #         (1.2, 0.3),  # 두 번째 웨이포인트
+    #         (1.5, 0.7),  # 세 번째 웨이포인트
+    #         (0.8, 0.8),  # 마지막 웨이포인트
+    #     ]
 
-        # 로봇 2에 대한 테스트 웨이포인트 (실제 좌표)
-        test_waypoints_robot2 = [
-            (1.8, 0.1),  # 첫 번째 웨이포인트
-            (1.0, 0.4),  # 두 번째 웨이포인트
-            (0.3, 0.6),  # 세 번째 웨이포인트
-        ]
+    #     # 로봇 2에 대한 테스트 웨이포인트 (실제 좌표)
+    #     test_waypoints_robot2 = [
+    #         (1.8, 0.1),  # 첫 번째 웨이포인트
+    #         (1.0, 0.4),  # 두 번째 웨이포인트
+    #         (0.3, 0.6),  # 세 번째 웨이포인트
+    #     ]
 
-        if 1 in ROBOT_CONFIG:
-            self.set_robot_waypoints(1, test_waypoints_robot1)
-        if 2 in ROBOT_CONFIG:
-            self.set_robot_waypoints(2, test_waypoints_robot2)
+    #     if 1 in ROBOT_CONFIG:
+    #         self.set_robot_waypoints(1, test_waypoints_robot1)
+    #     if 2 in ROBOT_CONFIG:
+    #         self.set_robot_waypoints(2, test_waypoints_robot2)
 
     def set_robot_waypoints(self, robot_id, waypoints):
         """로봇에 웨이포인트 리스트 설정
@@ -2680,10 +2734,19 @@ class GridCameraWidget(QWidget):
                 f"🛣️ 로봇{robot_id} 웨이포인트 경로 계획: {len(planned_paths[robot_id])} 스텝"
             )
 
+            # ✅바뀐 경우에만 출력
+            path_len = len(planned_paths[robot_id])
+            key = (tuple(target_grid), path_len)
+            if self._last_plan_log.get(robot_id) != key:
+                print(f"🛣️ 로봇{robot_id} 웨이포인트 경로 계획: {path_len} 스텝")
+                self._last_plan_log[robot_id] = key
+
             # A* 경로를 실제 웨이포인트로 변환하여 발행
             if self.enable_robot_control:
                 self.publish_path_as_waypoints(robot_id, planned_paths[robot_id])
         else:
+            # 경로 없음이면 이전 로그 상태 리셋(다음에 성공하면 다시 한 번만 로그)
+            self._last_plan_log.pop(robot_id, None)
             print(f"⚠️ 로봇{robot_id} 웨이포인트 경로를 찾을 수 없습니다.")
 
     def image_to_real_coords(self, x, y):
@@ -2870,6 +2933,7 @@ class IntegratedGridCameraApp(QWidget):
         # 탭 2: 작업 관리 페이지
         self.task_widget = TaskManagerWidget(self.task_manager, camera=self.camera_widget)
         self.tab_widget.addTab(self.task_widget, "📋 작업 스케줄 관리")
+
         
         # 탭 3: 입출고 재고 내역 페이지
         self.table_widget = InOutInventoryWidget()
