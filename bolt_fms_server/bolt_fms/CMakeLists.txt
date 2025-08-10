@@ -17,6 +17,13 @@ find_package(tf2 REQUIRED)
 
 find_package(rosidl_default_generators REQUIRED)
 
+rosidl_generate_interfaces(${PROJECT_NAME}
+"msg/InboundUpdate.msg"
+"msg/TaskSimple.msg"
+DEPENDENCIES geometry_msgs builtin_interfaces
+)
+ament_export_dependencies(rosidl_default_runtime)
+
 # ─── Include Directories ───────────────────────────────────────
 include_directories(include)
 
@@ -59,6 +66,11 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
+# 리소스 설치
+install(DIRECTORY resources
+  DESTINATION share/${PROJECT_NAME}
+)
+
 # python 스크립트를 실행 파일로 설치
 install(PROGRAMS
   scripts/GUI/inbound_gui.py
@@ -68,9 +80,6 @@ install(PROGRAMS
 # ❗ msg 디렉토리는 현재 사용 안하므로 제거 또는 주석 처리
 # install(DIRECTORY msg DESTINATION share/${PROJECT_NAME}/msg)
 
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/InboundUpdate.msg"  # 👈 이 줄을 추가하세요!
-)
 
 
 # ─── Python Scripts ────────────────────────────────────────────

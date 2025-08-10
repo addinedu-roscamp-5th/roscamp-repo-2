@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
+    QSplitter,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -148,6 +149,15 @@ class TaskRobot:
     def is_available(self):
         return self.status == RobotStatus.IDLE
 
+# 파일 상단 근처에
+LOC = {
+    "IN_CALL":  (0.10, 0.10),
+    "IN_LOAD":  (0.20, 0.20),
+    "IN_SHELF": (1.00, 0.50),
+    "OUT_PICK": (4.00, 4.00),
+    "OUT_DROP": (10.0, 10.0),
+}
+
 
 class TaskManager:
     def __init__(self):
@@ -161,6 +171,9 @@ class TaskManager:
             5: TaskRobot(5, RobotType.ARM, (3, 2)),
         }
         self.db = None
+        # 초기화 시 한 번
+        self.seen_inbound_ids = set()
+        self.seen_outbound_ids = set()
 
     # def create_inbound_tasks(self, process_id, total_amount, batch_size=2):
     #     """
@@ -237,6 +250,44 @@ class TaskManager:
         print(f"[TaskGen] {process_id}: total={total_amount}, batches={len(tasks)}")
 
         return ProcessTask(process_id, tasks)
+
+    def create_inbound_process_from_row(self, row: dict):
+        pid = f"IN-{row.get('ib_id', row.get('id', 'UNKNOWN'))}"
+        proc = self.create_inbound_tasks(pid)  # 기존 생성기 재사용
+        for s in proc.steps:
+            if not getattr(s, "location", None) and s.task_type.name == "MOVE":
+                s.location = LOC["IN_CALL"] if s.step_id.endswith("_1") else LOC["IN_SHELF"]
+        proc.meta = {"kind": "inbound", "record": row}
+        return proc
+
+    def create_outbound_process_from_row(self, row: dict):
+        pid = f"OUT-{row.get('ob_id', row.get('id', 'UNKNOWN'))}"
+        proc = self.create_outbound_tasks(pid)
+        for s in proc.steps:
+            if not getattr(s, "location", None) and s.task_type.name == "MOVE":
+                s.location = LOC["OUT_PICK"] if s.step_id.endswith("_1") else LOC["OUT_DROP"]
+        proc.meta = {"kind": "outbound", "record": row}
+        return proc
+
+
+    def make_process_task(self, process_type: str, row: dict):
+        if process_type not in ("입고", "출고") or not row:
+            return
+
+        if process_type == "입고":
+            rid = row.get("ib_id", row.get("id"))
+            if rid in self.seen_inbound_ids:
+                return
+            process = self.create_inbound_process_from_row(row)
+            self.seen_inbound_ids.add(rid)
+        else:  # 출고
+            rid = row.get("ob_id", row.get("id"))
+            if rid in self.seen_outbound_ids:
+                return
+            process = self.create_outbound_process_from_row(row)
+            self.seen_outbound_ids.add(rid)
+
+        self.add_process_task(process)  # 기존 큐 등록 함수
 
 
     def add_process_task(self, process: ProcessTask):
@@ -405,6 +456,8 @@ class DBManager:
         except requests.RequestException as e:
             print(f"[DB] DELETE 실패: {e}")
             return None
+        
+
 
 
 # ----------------------------------------------------------------------------
@@ -506,6 +559,7 @@ class DBWatcherWorker(QObject):
 # ======================================================================
 # ROS2 통신 관련 클래스들
 # ======================================================================
+from bolt_fms.msg import TaskSimple   # (A) 선택 시
 
 
 class RobotStatusPublisher(Node):
@@ -518,6 +572,7 @@ class RobotStatusPublisher(Node):
         self.pose_publishers = {}
         self.target_pose_publishers = {}
         self.cmd_vel_publishers = {}
+        self.task_publishers = {}
 
         for robot_id in ROBOT_CONFIG.keys():
             # 카메라 포즈 퍼블리셔 (현재 위치)
@@ -537,6 +592,11 @@ class RobotStatusPublisher(Node):
             cmd_vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
             self.cmd_vel_publishers[robot_id] = cmd_vel_pub
             self.get_logger().info(f"Created cmd_vel publisher for {cmd_vel_topic}")
+
+            task_topic = f"/robot{robot_id}/task"
+            task_pub = self.create_publisher(TaskSimple, task_topic, 10)  # robot_id별로
+            self.task_publishers[robot_id] = task_pub
+            self.get_logger().info(f"Create task simple publisher for {task_topic}")
 
     def publish_robot_pose(self, robot_id, x, y, yaw):
         """로봇 위치를 PoseStamped 메시지로 발행"""
@@ -564,6 +624,25 @@ class RobotStatusPublisher(Node):
 
         # 메시지 발행
         self.pose_publishers[robot_id].publish(pose_msg)
+        
+    def publish_task(self, robot_id: int, task_type: str, x: float, y: float, yaw: float, task_id: int = 0):
+        msg = TaskSimple()
+        msg.task_type = task_type
+        msg.target_pose.header.frame_id = "map"
+        now = self.get_clock().now().to_msg()
+        msg.target_pose.header.stamp = now
+        msg.target_pose.pose.position.x = x
+        msg.target_pose.pose.position.y = y
+        qx,qy,qz,qw = self.euler_to_quaternion(0.0, 0.0, yaw)
+        msg.target_pose.pose.orientation.x = qx
+        msg.target_pose.pose.orientation.y = qy
+        msg.target_pose.pose.orientation.z = qz
+        msg.target_pose.pose.orientation.w = qw
+        msg.task_id = task_id
+
+        pub = self.task_publishers.get(robot_id)
+        if pub:
+            pub.publish(msg)
 
     def euler_to_quaternion(self, roll, pitch, yaw):
         """오일러 각을 쿼터니언으로 변환"""
@@ -584,6 +663,13 @@ class RobotStatusPublisher(Node):
     def publish_target_pose(self, robot_id, target_x, target_y, target_yaw=0.0):
         """목표 위치(웨이포인트)를 ROS2 토픽으로 발행"""
         if robot_id not in self.target_pose_publishers:
+            return
+        try:
+            target_x = 0.0 if target_x is None else float(target_x)
+            target_y = 0.0 if target_y is None else float(target_y)
+            target_yaw = 0.0 if target_yaw is None else float(target_yaw)
+        except Exception:
+            self.get_logger().error(f"Bad target_pose inputs: x={target_x!r}, y={target_y!r}, yaw={target_yaw!r}")
             return
 
         # PoseStamped 메시지 생성
@@ -607,9 +693,8 @@ class RobotStatusPublisher(Node):
 
         # 메시지 발행
         self.target_pose_publishers[robot_id].publish(pose_msg)
-        self.get_logger().info(
-            f"Published target pose for robot{robot_id}: ({target_x:.2f}, {target_y:.2f})"
-        )
+        self.get_logger().info(f"types: x={type(target_x)}, y={type(target_y)}, yaw={type(target_yaw)}")
+
 
     # def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
     #     """로봇 속도 제어 명령 발행"""
@@ -863,9 +948,11 @@ def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> Proc
 class TaskManagerWidget(QWidget):
     """작업 관리 페이지 위젯"""
 
-    def __init__(self, task_manager):
+    def __init__(self, task_manager, camera=None):
         super().__init__()
         self.manager = task_manager
+        self.camera = camera  
+        self._dispatched = set()          
         self.counter = 1
         self.init_ui()
 
@@ -992,6 +1079,10 @@ class TaskManagerWidget(QWidget):
         self.add_log(f"📤 출고 작업 {task.task_id} 추가됨")
         self.counter += 1
         self.update_tables()
+        
+    def auto_assign_tasks(self):
+        """자동 작업 할당 실행"""
+        msg=self.manager.assign_tasks()
 
     def assign_tasks(self):
         """작업 할당 실행"""
@@ -1000,7 +1091,81 @@ class TaskManagerWidget(QWidget):
         for line in msg.split("\n"):
             if line.strip():
                 self.add_log(line)
+                
+        # ✅ 새로 할당된 모바일 MOVE 작업들을 경로계획하고 발행
+        # self._plan_and_publish_for_new_assignments()
+
         self.update_tables()
+        
+    def _real_to_cell(self, real_x, real_y):
+        """실좌표 -> 그리드 셀(row, col) 변환"""
+        if not self.camera:
+            return None
+        r = int(real_y / self.camera.real_height * self.camera.grid_rows)
+        c = int(real_x / self.camera.real_width  * self.camera.grid_cols)
+        r = max(0, min(self.camera.grid_rows - 1, r))
+        c = max(0, min(self.camera.grid_cols - 1, c))
+        return (r, c)
+
+    def _plan_and_publish_for_new_assignments(self):
+        if not self.camera or not self.camera.ros_node:
+            self.add_log("⚠️ 카메라/ROS 미초기화로 발행 생략")
+            return
+
+        for comp in self.manager.all_process_tasks:
+            for t in comp.steps:
+                if (t.status == TaskStatus.ASSIGNED and
+                    t.robot_type == RobotType.MOBILE and
+                    t.task_type == TaskType.MOVE and
+                    t.task_id not in self._dispatched and
+                    t.assigned_robot):
+
+                    rid = t.assigned_robot
+                    tx, ty = t.location if t.location else (None, None)
+                    if tx is None or ty is None:
+                        continue
+
+                    # 현재 로봇 위치(카메라 추정 우선, 없으면 TaskManager의 마지막 위치)
+                    if (rid in getattr(self.camera, "robot_positions", {}) and
+                            self.camera.robot_positions[rid].get("real_coords")):
+                        rx, ry = self.camera.robot_positions[rid]["real_coords"]
+                    else:
+                        rx, ry = self.manager.robots[rid].position
+
+                    start = self._real_to_cell(rx, ry)
+                    goal  = self._real_to_cell(tx, ty)
+
+                    yaw = 0.0
+                    path = []
+                    if start and goal:
+                        # ✅ 8방향 A* 경로
+                        path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
+
+                    if path and len(path) > 1:
+                        # 경로를 웨이포인트로 저장/시각화하고 첫 점을 즉시 target_pose로 발행
+                        self.camera.publish_path_as_waypoints(rid, path)
+
+                        # 첫 웨이포인트 기준 yaw 계산
+                        first_real = self.camera.grid_to_real_coords(path[1][0], path[1][1])
+                        dx, dy = first_real[0] - rx, first_real[1] - ry
+                        yaw = math.atan2(dy, dx)  # ✅ 라디안 0은 x+ 방향
+                    else:
+                        # 경로가 없으면 바로 목적지로 발행
+                        dx, dy = tx - rx, ty - ry
+                        yaw = math.atan2(dy, dx)
+                        self.camera.ros_node.publish_target_pose(rid, tx, ty, yaw)
+
+                    # ✅ /robot{rid}/task (TaskSimple) 발행
+                    if hasattr(self.camera.ros_node, "publish_task"):
+                        self.camera.ros_node.publish_task(
+                            robot_id=rid,
+                            task_type=t.task_type.value,
+                            x=tx, y=ty, yaw=yaw,
+                            task_id=0  # 간단 모드
+                        )
+
+                    self._dispatched.add(t.task_id)
+                    self.add_log(f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행")
 
     def complete_task(self, robot_id):
         """로봇 작업 완료 처리"""
@@ -1075,11 +1240,25 @@ class TaskManagerWidget(QWidget):
                 self.robot_status_table.item(row, 2).setBackground(Qt.GlobalColor.green)
 
 
+
+# ======================================================================
+# 이미지 경로 저장
+# ======================================================================
+
+import os
+from ament_index_python.packages import get_package_share_directory
+
+def get_image_path():
+    # bolt_fms 패키지의 share 디렉터리
+    share_dir = get_package_share_directory('bolt_fms')
+    # 설치된 리소스 경로 조합
+    img_path = os.path.join(share_dir, 'resources', 'images', 'test.png')
+    return img_path
+
+
 # ======================================================================
 # 카메라 및 그리드 관리 위젯
 # ======================================================================
-
-
 class GridCameraWidget(QWidget):
     """그리드 카메라 페이지 위젯"""
 
@@ -1335,12 +1514,14 @@ class GridCameraWidget(QWidget):
     # 나머지 메서드들 (원본과 동일)
     def update_frame(self):
         """프레임 업데이트"""
-        if not self.camera or not self.camera.isOpened():
-            return
-
         ret, frame = self.camera.read()
-        if not ret:
-            return
+        
+        if self.camera is None or (hasattr(self.camera, "isOpened") and not self.camera.isOpened()):
+            frame = self._load_placeholder()
+            self.current_frame = frame
+            self.display_frame()
+            # return
+        
 
         self.current_frame = frame.copy()
 
@@ -1353,6 +1534,25 @@ class GridCameraWidget(QWidget):
 
         # Qt용 이미지로 변환
         self.display_frame()
+    
+    def _load_placeholder(self):
+        """웹캠 미오픈/프레임 실패 시 보여줄 대체 이미지"""
+        import cv2, os, numpy as np
+
+        # 프로젝트 기준 절대경로로 읽는 게 안전합니다.
+        img_path = get_image_path()
+        # 예) OpenCV
+        import cv2
+
+        img = cv2.imread(img_path)
+        if img is None:
+            # 파일 없으면 검은 캔버스 생성 + 안내 문구
+            w = getattr(self, "CAP_WIDTH", 1280)
+            h = getattr(self, "CAP_HEIGHT", 720)
+            img = np.zeros((h, w, 3), dtype=np.uint8)
+            cv2.putText(img, "Webcam Off", (20, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3, cv2.LINE_AA)
+        return img    
 
     def detect_apriltags(self):
         """AprilTag 감지 및 로봇 위치 추적"""
@@ -1430,12 +1630,12 @@ class GridCameraWidget(QWidget):
                     row, col = grid_pos
                     real_x, real_y = real_coords
                     print(
-                        f"🤖 로봇{robot_id} (태그{tag_id}): 그리드({row},{col}) 실제({real_x:.3f},{real_y:.3f}) yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°)"
+                        f"🤖 로봇{robot_id} (태그{tag_id}): 그리드({col},{row}) 실제({real_x:.3f},{real_y:.3f}) yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°)"
                     )
                 elif grid_pos:
                     row, col = grid_pos
                     print(
-                        f"🤖 로봇{robot_id} (태그{tag_id}): 그리드({row},{col}) yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°) - 그리드 미설정"
+                        f"🤖 로봇{robot_id} (태그{tag_id}): 그리드({col},{row}) yaw:{yaw:.3f}rad ({math.degrees(yaw):.1f}°) - 그리드 미설정"
                     )
                 else:
                     print(
@@ -1599,8 +1799,8 @@ class GridCameraWidget(QWidget):
     def draw_yaw_arrow(self, center, yaw, color):
         """로봇의 yaw 방향을 화살표로 표시"""
         arrow_length = 30
-        arrow_end_x = int(center[0] - arrow_length * math.cos(yaw))
-        arrow_end_y = int(center[1] - arrow_length * math.sin(yaw))
+        arrow_end_x = int(center[0] + arrow_length * math.cos(yaw))
+        arrow_end_y = int(center[1] + arrow_length * math.sin(yaw))
 
         # 메인 화살표 선
         cv2.arrowedLine(
@@ -1702,9 +1902,9 @@ class GridCameraWidget(QWidget):
         target_yaw = 0.0
         if robot_id in self.robot_positions and self.robot_positions[robot_id].get("real_coords"):
             rx, ry = self.robot_positions[robot_id]["real_coords"]
-            dx = first_waypoint[0] + rx
-            dy = first_waypoint[1] + ry
-            target_yaw = 2 * math.atan2(dy, dx)
+            dx = first_waypoint[0] - rx
+            dy = first_waypoint[1] - ry
+            target_yaw = math.atan2(dy, dx)
 
         self.ros_node.publish_target_pose(robot_id, first_waypoint[0], first_waypoint[1], target_yaw)
         self.robot_target_published[robot_id] = True
@@ -2021,7 +2221,9 @@ class GridCameraWidget(QWidget):
             return
 
         # Qt 좌표를 실제 이미지 좌표로 변환
+        # print("[click] qt:", pos.x(), pos.y())
         real_pos = self.qt_to_image_coords(pos)
+        # print("[click] real:", real_pos)
         if real_pos is None:
             return
 
@@ -2133,7 +2335,7 @@ class GridCameraWidget(QWidget):
             u, v = transformed[0][0]
             row = int(v * self.grid_rows)
             col = int(u * self.grid_cols)
-            print(row, col)
+            # print(row, col)
 
             if 0 <= row < self.grid_rows and 0 <= col < self.grid_cols:
                 return (row, col)
@@ -2172,16 +2374,6 @@ class GridCameraWidget(QWidget):
         grid_row = max(0, min(grid_row, self.grid_rows - 1))
 
         return (grid_row, grid_col)
-
-    def update_obstacle_list(self):
-        """장애물 리스트 UI 업데이트"""
-        self.obstacle_list.clear()
-        for row, col in sorted(self.obstacles):
-            real_coords = self.grid_to_real_coords(row, col)
-            if real_coords:
-                real_x, real_y = real_coords
-                item_text = f"그리드({row},{col}) → 실제({real_x:.2f},{real_y:.2f})"
-                self.obstacle_list.addItem(item_text)
 
     def start_corner_setting(self):
         """코너 설정 시작"""
@@ -2273,14 +2465,6 @@ class GridCameraWidget(QWidget):
         """모든 장애물 제거"""
         self.obstacles.clear()
         self.update_obstacle_list()
-
-    def set_test_waypoints(self):
-        """테스트용 웨이포인트 설정"""
-        pass
-
-    def clear_waypoints(self):
-        """모든 웨이포인트 지우기"""
-        self.robot_waypoints = {}
 
     def toggle_robot_control(self, state):
         """로봇 자동 제어 활성화/비활성화"""
@@ -2527,6 +2711,77 @@ class GridCameraWidget(QWidget):
             pass
 
         return None
+    
+class InOutInventoryWidget(QWidget):
+    """좌상=입고, 좌하=출고, 우측=재고 테이블 배치 탭"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # ── 테이블 위젯들 ─────────────────────────────────────
+        self.inbound_table = QTableWidget(0, 4)   # 입고
+        self.outbound_table = QTableWidget(0, 4)  # 출고
+        self.inventory_table = QTableWidget(0, 5) # 재고
+
+        self.inbound_table.setHorizontalHeaderLabels(["입고ID", "품목", "수량", "일시"])
+        self.outbound_table.setHorizontalHeaderLabels(["출고ID", "품목", "수량", "일시"])
+        self.inventory_table.setHorizontalHeaderLabels(["SKU", "품목", "재고수량", "위치", "최종갱신"])
+
+        # 더미데이터 채우기 (필요시 제거)
+        self._fill_dummy()
+
+        # ── 레이아웃: 좌측(상/하 스플리터) + 우측(재고) ───────
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        left_splitter.addWidget(self._wrap_with_label("📥 입고 내역", self.inbound_table))
+        left_splitter.addWidget(self._wrap_with_label("📤 출고 내역", self.outbound_table))
+        left_splitter.setSizes([300, 300])  # 좌상/좌하 초기 높이 비율
+
+        right_panel = self._wrap_with_label("📦 재고 내역", self.inventory_table)
+
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.addWidget(left_splitter)
+        main_splitter.addWidget(right_panel)
+        main_splitter.setSizes([700, 500])  # 좌/우 초기 폭 비율
+
+        # ── 탭 전체 레이아웃 ────────────────────────────────
+        outer = QHBoxLayout(self)
+        outer.addWidget(main_splitter)
+
+    def _wrap_with_label(self, title: str, table: QTableWidget) -> QWidget:
+        """섹션 제목 + 테이블을 세로로 감싸는 작은 패널"""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lbl = QLabel(title)
+        lbl.setStyleSheet("font-weight: 600;")
+        lay.addWidget(lbl)
+        lay.addWidget(table)
+        return w
+
+    def _fill_dummy(self):
+        """테스트용 더미 데이터"""
+        inbound_rows = [
+            ("IB-001", "모터 A", "10", "2025-08-10 10:05"),
+            ("IB-002", "컨베이어벨트", "3", "2025-08-10 12:21"),
+        ]
+        outbound_rows = [
+            ("OB-101", "모터 A", "4", "2025-08-10 13:10"),
+            ("OB-102", "베어링 B", "6", "2025-08-10 13:32"),
+        ]
+        inventory_rows = [
+            ("SKU-1001", "모터 A", "26", "A-01-03", "2025-08-10 13:10"),
+            ("SKU-2002", "컨베이어벨트", "7", "B-02-01", "2025-08-10 12:21"),
+            ("SKU-3003", "베어링 B", "14", "C-01-02", "2025-08-10 13:32"),
+        ]
+
+        def load_rows(table, rows):
+            table.setRowCount(len(rows))
+            for r, row in enumerate(rows):
+                for c, val in enumerate(row):
+                    table.setItem(r, c, QTableWidgetItem(val))
+            table.resizeColumnsToContents()
+
+        load_rows(self.inbound_table, inbound_rows)
+        load_rows(self.outbound_table, outbound_rows)
+        load_rows(self.inventory_table, inventory_rows)
 
 
 # ======================================================================
@@ -2545,10 +2800,17 @@ class IntegratedGridCameraApp(QWidget):
         self.task_manager = TaskManager()
         self.init_ui()
 
-        # ✅ DB Watcher (QThread)
-        self.db_thread = QThread(self)
-        self.db_watcher = DBWatcherWorker(self.db, interval_ms=2000)
-        self.db_watcher.moveToThread(self.db_thread)
+        # # ✅ DB Watcher (QThread)
+        # self.db_thread = QThread(self)
+        # self.db_watcher = DBWatcherWorker(self.db, interval_ms=2000)
+        # self.db_watcher.moveToThread(self.db_thread)
+        # # 스레드 수명/시작 연결
+        # self.db_thread.started.connect(self.db_watcher.start)
+        # self.db_watcher.stopped.connect(self.db_thread.quit)
+        # # 데이터 갱신 시그널 연결
+        # self.db_watcher.inbound_updated.connect(self.on_inbound_updated)
+        # # 스레드 시작
+        # self.db_thread.start()
 
         # ROS 워커
         # self.ros_thread = QThread(self)
@@ -2559,16 +2821,6 @@ class IntegratedGridCameraApp(QWidget):
         # ros_worker.add_node(node1)
         # ros_worker.add_node(node2)
         # self.ros_thread.start()
-
-        # 스레드 수명/시작 연결
-        self.db_thread.started.connect(self.db_watcher.start)
-        self.db_watcher.stopped.connect(self.db_thread.quit)
-
-        # 데이터 갱신 시그널 연결
-        self.db_watcher.inbound_updated.connect(self.on_inbound_updated)
-
-        # 스레드 시작
-        self.db_thread.start()
 
     # def on_inbound_updated(self, rows):
 
@@ -2616,8 +2868,12 @@ class IntegratedGridCameraApp(QWidget):
         self.tab_widget.addTab(self.camera_widget, "📹 카메라 및 로봇 제어")
 
         # 탭 2: 작업 관리 페이지
-        self.task_widget = TaskManagerWidget(self.task_manager)
+        self.task_widget = TaskManagerWidget(self.task_manager, camera=self.camera_widget)
         self.tab_widget.addTab(self.task_widget, "📋 작업 스케줄 관리")
+        
+        # 탭 3: 입출고 재고 내역 페이지
+        self.table_widget = InOutInventoryWidget()
+        self.tab_widget.addTab(self.table_widget, "📋 물류 입출고 재고 내역 확인")
 
         layout.addWidget(self.tab_widget)
         self.setLayout(layout)

@@ -1,0 +1,3 @@
+string task_type                 # "MOVE"|"WAIT_USER"|"PICK"|"PLACE"|...
+geometry_msgs/PoseStamped target_pose
+uint32 task_id                   # 선택: 미사용 시 0

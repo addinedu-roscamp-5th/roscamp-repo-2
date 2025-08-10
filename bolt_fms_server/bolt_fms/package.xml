@@ -15,6 +15,8 @@
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
 
+  
+
   <!-- 🐍 Python 노드를 위한 의존성 -->
   <depend>rclpy</depend>
   <depend>PySide6</depend>
@@ -23,6 +25,10 @@
   <build_depend>rosidl_default_generators</build_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
+
+
+  <!--파이썬에서 get_package_share_directory()-->
+  <exec_depend>ament_index_python</exec_depend>
   
   <!-- package.xml -->
   <build_depend>nlohmann_json</build_depend>
