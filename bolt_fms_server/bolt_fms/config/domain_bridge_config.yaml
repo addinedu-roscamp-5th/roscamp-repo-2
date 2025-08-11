@@ -1,6 +1,7 @@
 # Name of the domain bridge, used for node naming and logging
 name: my_bridge
 
+to_domain: 0
 
 topics:
 
@@ -116,3 +117,36 @@ topics:
     from_domain: 35
     to_domain: 0
     remap: robot5/joint_states
+
+
+# task pub topics 전체 ----------------------------
+
+  robot1/task:
+    type: bolt_fms/msg/TaskSimple
+    from_domain: 0
+    to_domain: 31
+    remap: task
+
+  robot2/task:
+    type: bolt_fms/msg/TaskSimple
+    from_domain: 0
+    to_domain: 32
+    remap: task
+
+  robot3/task:
+    type: bolt_fms/msg/TaskSimple
+    from_domain: 0
+    to_domain: 33
+    remap: task
+
+  robot4/task:
+    type: jetcobot_interfaces/msg/TaskSimple
+    from_domain: 0
+    to_domain: 34
+    remap: task
+
+  robot5/task:
+    type: jetcobot_interfaces/msg/TaskSimple
+    from_domain: 0
+    to_domain: 35
+    remap: task
