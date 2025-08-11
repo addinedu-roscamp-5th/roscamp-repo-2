@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // 장바구니 요약 업데이트
 function updateCartSummary() {
+    let totalOriginalPrice = 0; // 원래 가격 합계
     let totalPrice = 0;
     let discount = 0;
 
@@ -61,15 +62,16 @@ function updateCartSummary() {
         const original = originalText ? parseInt(originalText.replace(/[^0-9]/g, '')) : price;
 
         if (!isNaN(quantity) && !isNaN(price)) {
+            totalOriginalPrice += quantity * original; // 원래 가격
             totalPrice += quantity * price;
             discount += quantity * (original - price);
         }
     });
 
     // DOM에 적용
-    const totalPriceText = totalPrice.toLocaleString('ko-KR') + '원';
+    const totalPriceText = totalOriginalPrice.toLocaleString('ko-KR') + '원';
     const discountText = '-' + discount.toLocaleString('ko-KR') + '원';
-    const finalPriceText = (totalPrice).toLocaleString('ko-KR') + '원';
+    const finalPriceText = totalPrice.toLocaleString('ko-KR') + '원';
 
     const updateElem = (selector, value) => {
         const el = document.querySelector(selector);
