@@ -44,24 +44,42 @@ topics:
     to_domain: 33
     remap: camera_pose
 
-# camera_pose topics ----------------------------
-  robot1/cmd_vel:
-    type: geometry_msgs/msg/Twist
-    from_domain: 0
-    to_domain: 31
-    remap: cmd_vel
+# cmd_vel topics ----------------------------
+  # robot1/cmd_vel:
+  #   type: geometry_msgs/msg/Twist
+  #   from_domain: 0
+  #   to_domain: 31
+  #   remap: cmd_vel
 
-  robot2/cmd_vel:
-    type: geometry_msgs/msg/Twist
-    from_domain: 0
-    to_domain: 32
-    remap: cmd_vel
+  # robot2/cmd_vel:
+  #   type: geometry_msgs/msg/Twist
+  #   from_domain: 0
+  #   to_domain: 32
+  #   remap: cmd_vel
 
-  robot3/cmd_vel:
+  # robot3/cmd_vel:
+  #   type: geometry_msgs/msg/Twist
+  #   from_domain: 0
+  #   to_domain: 33
+  #   remap: cmd_vel
+
+  cmd_vel:
     type: geometry_msgs/msg/Twist
-    from_domain: 0
-    to_domain: 33
-    remap: cmd_vel
+    from_domain: 31
+    to_domain: 0
+    remap: robot1/cmd_vel
+
+  cmd_vel:
+    type: geometry_msgs/msg/Twist
+    from_domain: 32
+    to_domain: 0
+    remap: robot2/cmd_vel
+
+  cmd_vel:
+    type: geometry_msgs/msg/Twist
+    from_domain: 33
+    to_domain: 0
+    remap: robot3/cmd_vel
 
 
 # target_pose pub topics ----------------------------
@@ -140,13 +158,13 @@ topics:
     remap: task
 
   robot4/task:
-    type: jetcobot_interfaces/msg/TaskSimple
+    type: bolt_fms/msg/TaskSimple
     from_domain: 0
     to_domain: 34
     remap: task
 
   robot5/task:
-    type: jetcobot_interfaces/msg/TaskSimple
+    type: bolt_fms/msg/TaskSimple
     from_domain: 0
     to_domain: 35
     remap: task

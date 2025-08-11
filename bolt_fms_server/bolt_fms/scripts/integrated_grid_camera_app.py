@@ -618,16 +618,20 @@ class RobotStatusPublisher(Node):
         pose_msg.pose.position.z = 0.0
 
         # Orientation 설정 (yaw를 quaternion으로 변환)
-        quat = self.euler_to_quaternion(0, 0, yaw)
-        pose_msg.pose.orientation.x = quat[0]
-        pose_msg.pose.orientation.y = quat[1]
-        pose_msg.pose.orientation.z = quat[2]
-        pose_msg.pose.orientation.w = quat[3]
+        # quat = self.euler_to_quaternion(0, 0, yaw)
+        # pose_msg.pose.orientation.x = quat[0]
+        # pose_msg.pose.orientation.y = quat[1]
+        # pose_msg.pose.orientation.z = quat[2]
+        # pose_msg.pose.orientation.w = quat[3]
+
+        pose_msg.pose.orientation.z = math.sin(yaw / 2.0)
+        pose_msg.pose.orientation.w = math.cos(yaw / 2.0)
+
 
         # 메시지 발행
         self.pose_publishers[robot_id].publish(pose_msg)
         
-    def publish_task(self, robot_id: int, task_type: str, x: float, y: float, yaw: float, task_id: int = 0):
+    def publish_task(self, robot_id: int, task_type: str, x: float, y: float, yaw: float):
         msg = TaskSimple()
         msg.task_type = task_type
         msg.target_pose.header.frame_id = "map"
@@ -640,7 +644,7 @@ class RobotStatusPublisher(Node):
         msg.target_pose.pose.orientation.y = qy
         msg.target_pose.pose.orientation.z = qz
         msg.target_pose.pose.orientation.w = qw
-        msg.task_id = task_id
+        # msg.task_id = task_id
 
         pub = self.task_publishers.get(robot_id)
         if pub:
@@ -662,16 +666,16 @@ class RobotStatusPublisher(Node):
 
         return [qx, qy, qz, qw]
 
-    def publish_target_pose(self, robot_id, target_x, target_y, target_yaw=0.0):
+    def publish_target_pose(self, robot_id, x, y, yaw=0.0):
         """목표 위치(웨이포인트)를 ROS2 토픽으로 발행"""
         if robot_id not in self.target_pose_publishers:
             return
         try:
-            target_x = 0.0 if target_x is None else float(target_x)
-            target_y = 0.0 if target_y is None else float(target_y)
-            target_yaw = 0.0 if target_yaw is None else float(target_yaw)
+            x = 0.0 if x is None else float(x)
+            y = 0.0 if y is None else float(y)
+            yaw = 0.0 if yaw is None else float(yaw)
         except Exception:
-            self.get_logger().error(f"Bad target_pose inputs: x={target_x!r}, y={target_y!r}, yaw={target_yaw!r}")
+            self.get_logger().error(f"Bad target_pose inputs: x={x!r}, y={y!r}, yaw={yaw!r}")
             return
 
         # PoseStamped 메시지 생성
@@ -682,42 +686,45 @@ class RobotStatusPublisher(Node):
         pose_msg.header.frame_id = "map"
 
         # Position 설정
-        pose_msg.pose.position.x = float(target_x)
-        pose_msg.pose.position.y = float(target_y)
+        pose_msg.pose.position.x = float(x)
+        pose_msg.pose.position.y = float(y)
         pose_msg.pose.position.z = 0.0
 
         # Orientation 설정
-        qx, qy, qz, qw = self.euler_to_quaternion(0.0, 0.0, float(target_yaw))
-        pose_msg.pose.orientation.x = qx
-        pose_msg.pose.orientation.y = qy
-        pose_msg.pose.orientation.z = qz
-        pose_msg.pose.orientation.w = qw
+        # qx, qy, qz, qw = self.euler_to_quaternion(0.0, 0.0, float(yaw))
+        # pose_msg.pose.orientation.x = qx
+        # pose_msg.pose.orientation.y = qy
+        # pose_msg.pose.orientation.z = qz
+        # pose_msg.pose.orientation.w = qw
+        pose_msg.pose.orientation.z = math.sin(yaw / 2.0)
+        pose_msg.pose.orientation.w = math.cos(yaw / 2.0)
 
+        self.get_logger().error(f"x={x}, y={y}, yaw={yaw}")
         # 메시지 발행
         self.target_pose_publishers[robot_id].publish(pose_msg)
-        # self.get_logger().info(f"types: x={type(target_x)}, y={type(target_y)}, yaw={type(target_yaw)}")
+        # self.get_logger().info(f"types: x={type(x)}, y={type(y)}, yaw={type(yaw)}")
 
 
-    # def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
-    #     """로봇 속도 제어 명령 발행"""
-    #     if robot_id not in self.cmd_vel_publishers:
-    #         return
+    def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
+        """로봇 속도 제어 명령 발행"""
+        if robot_id not in self.cmd_vel_publishers:
+            return
 
-    #     # Twist 메시지 생성
-    #     twist_msg = Twist()
-    #     twist_msg.linear.x = float(linear_x)
-    #     twist_msg.linear.y = float(linear_y)
-    #     twist_msg.linear.z = 0.0
-    #     twist_msg.angular.x = 0.0
-    #     twist_msg.angular.y = 0.0
-    #     twist_msg.angular.z = float(angular_z)
+        # Twist 메시지 생성
+        twist_msg = Twist()
+        twist_msg.linear.x = float(linear_x)
+        twist_msg.linear.y = float(linear_y)
+        twist_msg.linear.z = 0.0
+        twist_msg.angular.x = 0.0
+        twist_msg.angular.y = 0.0
+        twist_msg.angular.z = float(angular_z)
 
-    #     # 메시지 발행
-    #     self.cmd_vel_publishers[robot_id].publish(twist_msg)
+        # 메시지 발행
+        self.cmd_vel_publishers[robot_id].publish(twist_msg)
 
-    # def stop_robot(self, robot_id):
-    #     """로봇 정지"""
-    #     self.publish_cmd_vel(robot_id, 0.0, 0.0, 0.0)
+    def stop_robot(self, robot_id):
+        """로봇 정지"""
+        self.publish_cmd_vel(robot_id, 0.0, 0.0, 0.0)
 
 
 # ======================================================================
@@ -1063,51 +1070,52 @@ class TaskManagerWidget(QWidget):
         self.update_tables()
         
     def _plan_route_for_assigned_task(self, task, robot, process):
-        # 모바일 + MOVE + 위치가 있을 때만 경로계획
-        if getattr(task, "task_type", None) != TaskType.MOVE:
-            return
-        if getattr(task, "robot_type", None) != RobotType.MOBILE:
-            return
-        if not getattr(task, "location", None):
-            return
+        pass
+        # # 모바일 + MOVE + 위치가 있을 때만 경로계획
+        # if getattr(task, "task_type", None) != TaskType.MOVE:
+        #     return
+        # if getattr(task, "robot_type", None) != RobotType.MOBILE:
+        #     return
+        # if not getattr(task, "location", None):
+        #     return
 
-        # 현재 로봇 위치 (카메라 추정 있으면 우선 사용, 없으면 내부 상태)
-        rid = robot.id
-        if hasattr(self.camera, "robot_positions") \
-        and rid in self.camera.robot_positions \
-        and self.camera.robot_positions[rid].get("real_coords"):
-            rx, ry = self.camera.robot_positions[rid]["real_coords"]
-        else:
-            rx, ry = robot.position  # (x,y) 실좌표라고 가정
+        # # 현재 로봇 위치 (카메라 추정 있으면 우선 사용, 없으면 내부 상태)
+        # rid = robot.id
+        # if hasattr(self.camera, "robot_positions") \
+        # and rid in self.camera.robot_positions \
+        # and self.camera.robot_positions[rid].get("real_coords"):
+        #     rx, ry = self.camera.robot_positions[rid]["real_coords"]
+        # else:
+        #     rx, ry = robot.position  # (x,y) 실좌표라고 가정
 
-        tx, ty = task.location  # 목표 실좌표
+        # tx, ty = task.location  # 목표 실좌표
 
-        # 실좌표 -> 그리드셀 변환
-        def real_to_cell(x, y):
-            rows = self.camera.grid_rows
-            cols = self.camera.grid_cols
-            rw   = self.camera.real_width
-            rh   = self.camera.real_height
-            c = int(max(0, min(cols-1, x / rw * cols)))
-            r = int(max(0, min(rows-1, y / rh * rows)))
-            return (r, c)
+        # # 실좌표 -> 그리드셀 변환
+        # def real_to_cell(x, y):
+        #     rows = self.camera.grid_rows
+        #     cols = self.camera.grid_cols
+        #     rw   = self.camera.real_width
+        #     rh   = self.camera.real_height
+        #     c = int(max(0, min(cols-1, x / rw * cols)))
+        #     r = int(max(0, min(rows-1, y / rh * rows)))
+        #     return (r, c)
 
-        start = real_to_cell(rx, ry)
-        goal  = real_to_cell(tx, ty)
+        # start = real_to_cell(rx, ry)
+        # goal  = real_to_cell(tx, ty)
 
-        # A* 경로계획 (기존 플래너 재사용)
-        try:
-            path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
-        except Exception as e:
-            print(f"[Planner] A* failed: {e}")
-            path = None
+        # # A* 경로계획 (기존 플래너 재사용)
+        # try:
+        #     path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
+        # except Exception as e:
+        #     print(f"[Planner] A* failed: {e}")
+        #     path = None
 
-        # 경로를 태스크에 보관(필요 시)
-        task.planned_path = path
+        # # 경로를 태스크에 보관(필요 시)
+        # task.planned_path = path
 
-        # (선택) 화면/로봇에 보여주고 싶다면, 이미 있는 함수로 전달
-        if path:
-            self.camera.publish_path_as_waypoints(rid, path)
+        # # (선택) 화면/로봇에 보여주고 싶다면, 이미 있는 함수로 전달
+        # if path:
+        #     self.camera.publish_path_as_waypoints(rid, path)
 
 
     def add_log(self, message):
@@ -1142,7 +1150,7 @@ class TaskManagerWidget(QWidget):
         for line in msg.split("\n"):
             if line.strip():
                 self.add_log(line)
-        self._plan_and_publish_for_new_assignments()
+        # self._plan_and_publish_for_new_assignments()
         self.update_tables()
 
     def assign_tasks(self):
@@ -1168,63 +1176,64 @@ class TaskManagerWidget(QWidget):
         return (r, c)
 
     def _plan_and_publish_for_new_assignments(self):
-        if not self.camera or not self.camera.ros_node:
-            self.add_log("⚠️ 카메라/ROS 미초기화로 발행 생략")
-            return
+        pass
+        # if not self.camera or not self.camera.ros_node:
+        #     self.add_log("⚠️ 카메라/ROS 미초기화로 발행 생략")
+        #     return
 
-        for comp in self.manager.all_process_tasks:
-            for t in comp.steps:
-                if (t.status == TaskStatus.ASSIGNED and
-                    t.robot_type == RobotType.MOBILE and
-                    t.task_type == TaskType.MOVE and
-                    t.task_id not in self._dispatched and
-                    t.assigned_robot):
+        # for comp in self.manager.all_process_tasks:
+        #     for t in comp.steps:
+        #         if (t.status == TaskStatus.ASSIGNED and
+        #             t.robot_type == RobotType.MOBILE and
+        #             t.task_type == TaskType.MOVE and
+        #             t.task_id not in self._dispatched and
+        #             t.assigned_robot):
 
-                    rid = t.assigned_robot
-                    tx, ty = t.location if t.location else (None, None)
-                    if tx is None or ty is None:
-                        continue
+        #             rid = t.assigned_robot
+        #             tx, ty = t.location if t.location else (None, None)
+        #             if tx is None or ty is None:
+        #                 continue
 
-                    # 현재 로봇 위치(카메라 추정 우선, 없으면 TaskManager의 마지막 위치)
-                    if (rid in getattr(self.camera, "robot_positions", {}) and self.camera.robot_positions[rid].get("real_coords")):
-                        rx, ry = self.camera.robot_positions[rid]["real_coords"]
-                    else:
-                        rx, ry = self.manager.robots[rid].position
+        #             # 현재 로봇 위치(카메라 추정 우선, 없으면 TaskManager의 마지막 위치)
+        #             if (rid in getattr(self.camera, "robot_positions", {}) and self.camera.robot_positions[rid].get("real_coords")):
+        #                 rx, ry = self.camera.robot_positions[rid]["real_coords"]
+        #             else:
+        #                 rx, ry = self.manager.robots[rid].position
 
-                    start = self._real_to_cell(rx, ry)
-                    goal  = self._real_to_cell(tx, ty)
+        #             start = self._real_to_cell(rx, ry)
+        #             goal  = self._real_to_cell(tx, ty)
 
-                    yaw = 0.0
-                    path = []
-                    if start and goal:
-                        # ✅ 8방향 A* 경로
-                        path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
+        #             yaw = 0.0
+        #             path = []
+        #             if start and goal:
+        #                 # ✅ 8방향 A* 경로
+        #                 path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
 
-                    if path and len(path) > 1:
-                        # 경로를 웨이포인트로 저장/시각화하고 첫 점을 즉시 target_pose로 발행
-                        self.camera.publish_path_as_waypoints(rid, path)
+        #             if path and len(path) > 1:
+        #                 # 경로를 웨이포인트로 저장/시각화하고 첫 점을 즉시 target_pose로 발행
+        #                 self.camera.publish_path_as_waypoints(rid, path)
 
-                        # 첫 웨이포인트 기준 yaw 계산
-                        first_real = self.camera.grid_to_real_coords(path[1][0], path[1][1])
-                        dx, dy = first_real[0] - rx, first_real[1] - ry
-                        yaw = math.atan2(dy, dx)  # ✅ 라디안 0은 x+ 방향
-                    else:
-                        # 경로가 없으면 바로 목적지로 발행
-                        dx, dy = tx - rx, ty - ry
-                        yaw = math.atan2(dy, dx)
-                        self.camera.ros_node.publish_target_pose(rid, tx, ty, yaw)
+        #                 # 첫 웨이포인트 기준 yaw 계산
+        #                 first_real = self.camera.grid_to_real_coords(path[1][0], path[1][1])
+        #                 dx, dy = first_real[0] - rx, first_real[1] - ry
+        #                 yaw = math.atan2(dy, dx)  # ✅ 라디안 0은 x+ 방향
+        #             else:
+        #                 # 경로가 없으면 바로 목적지로 발행
+        #                 dx, dy = tx - rx, ty - ry
+        #                 yaw = math.atan2(dy, dx)
+        #                 self.camera.ros_node.publish_target_pose(rid, tx, ty, yaw)
 
-                    # ✅ /robot{rid}/task (TaskSimple) 발행
-                    # if hasattr(self.camera.ros_node, "publish_task"):
-                    #     self.camera.ros_node.publish_task(
-                    #         robot_id=rid,
-                    #         task_type=t.task_type.value,
-                    #         x=tx, y=ty, yaw=yaw,
-                    #         task_id=0  # 간단 모드
-                    #     )
+        #             # ✅ /robot{rid}/task (TaskSimple) 발행
+        #             # if hasattr(self.camera.ros_node, "publish_task"):
+        #             #     self.camera.ros_node.publish_task(
+        #             #         robot_id=rid,
+        #             #         task_type=t.task_type.value,
+        #             #         x=tx, y=ty, yaw=yaw,
+        #             #         task_id=0  # 간단 모드
+        #             #     )
 
-                    self._dispatched.add(t.task_id)
-                    self.add_log(f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행")
+        #             self._dispatched.add(t.task_id)
+        #             self.add_log(f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행")
 
 
     def complete_task(self, robot_id):
@@ -1359,7 +1368,7 @@ class GridCameraWidget(QWidget):
         # === 웨이포인트 관련 ===
         self.robot_waypoints = {}  # 로봇별 웨이포인트 리스트 {robot_id: [(x,y), ...]}
         self.robot_current_waypoint_index = {}  # 로봇별 현재 웨이포인트 인덱스
-        self.waypoint_tolerance = 0.1  # 웨이포인트 도달 허용 오차 (미터)
+        self.waypoint_tolerance = 0.01  # 웨이포인트 도달 허용 오차 (미터)
         self.enable_robot_control = False  # 로봇 제어 활성화 여부
         self.robot_target_published = {}  # 로봇별 목표 발행 상태
 
@@ -1475,7 +1484,7 @@ class GridCameraWidget(QWidget):
         path_layout.addLayout(goal_layout)
 
         self.plan_path_button = QPushButton("경로 계획 실행")
-        self.plan_path_button.clicked.connect(self.plan_robot_paths)
+        self.plan_path_button.clicked.connect(self.plan_robot_path)
         path_layout.addWidget(self.plan_path_button)
 
         self.clear_paths_button = QPushButton("경로 지우기")
@@ -1621,7 +1630,7 @@ class GridCameraWidget(QWidget):
             return
 
         gray = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2GRAY)
-        detections = self.apriltag_detector.detect(gray)
+        detections = self.apriltag_detector.detect(gray, estimate_tag_pose=False)
 
         self.apriltag_detections = []
         self.robot_positions = {}  # 로봇 위치 초기화
@@ -1722,9 +1731,25 @@ class GridCameraWidget(QWidget):
         """코너 점들로부터 yaw 각도 계산 (x축 기준 라디안)"""
         # AprilTag 코너 순서: [bottom-left, bottom-right, top-right, top-left]
         # x축 방향을 얻기 위해 오른쪽 변의 방향 벡터 사용
+        # pt0, pt1 = corners[0], corners[1]
+        # dx = pt1[0] - pt0[0]
+        # dy = pt1[1] - pt0[1]
+        # # 오른쪽 변의 방향 벡터 (위쪽 방향)
+
+        # # x축 기준 각도 계산
+        # yaw = math.atan2(dy, dx)
+
+        # # 90도 보정 (오른쪽 변이 위쪽 방향이므로, 실제 로봇 전면 방향은 -90도 회전)
+        # yaw -= math.pi / 2
+
+        # # -π에서 π 범위로 정규화
+        # while yaw > math.pi:
+        #     yaw -= 2 * math.pi
+        # while yaw < -math.pi:
+        #     yaw += 2 * math.pi
+
         bottom_right = corners[1]
         top_right = corners[2]
-
         # 오른쪽 변의 방향 벡터 (위쪽 방향)
         direction_vector = top_right - bottom_right
 
@@ -1732,13 +1757,14 @@ class GridCameraWidget(QWidget):
         yaw = math.atan2(direction_vector[1], direction_vector[0])
 
         # 90도 보정 (오른쪽 변이 위쪽 방향이므로, 실제 로봇 전면 방향은 -90도 회전)
-        yaw -= math.pi / 2
+        yaw += math.pi / 2
 
         # -π에서 π 범위로 정규화
         while yaw > math.pi:
             yaw -= 2 * math.pi
         while yaw < -math.pi:
             yaw += 2 * math.pi
+
 
         return yaw
 
@@ -1950,11 +1976,27 @@ class GridCameraWidget(QWidget):
         if not path_waypoints:
             return
 
+        # # 첫 번째 경로 포인트를 즉시 발행
+        # first_waypoint = path_waypoints[0]
+        # self.ros_node.publish_target_pose(
+        #     robot_id, first_waypoint[0], first_waypoint[1]
+        # )
+        # # 나머지 경로 포인트들을 로봇 경로 시스템에 저장
+        # if len(path_waypoints) > 1:
+        #     # 기존 웨이포인트를 경로 기반으로 업데이트
+        #     remaining_waypoints = path_waypoints[1:]
+        #     print(
+        #         f"📍 로봇{robot_id} A* 경로 기반 웨이포인트 {len(remaining_waypoints)}개 추가 대기"
+        #     )
+        # # 목표 발행 상태 업데이트
+        # self.robot_target_published[robot_id] = True
+
+
         # ✅ 웨이포인트 리스트 저장 + 인덱스 초기화 추가
         self.robot_waypoints[robot_id] = path_waypoints
         self.robot_current_waypoint_index[robot_id] = 0
         self.robot_target_published[robot_id] = False
-        self.update_waypoint_list()
+        # self.update_waypoint_list()
 
         # 첫 번째 경로 포인트를 즉시 발행
         first_waypoint = path_waypoints[0]
@@ -1965,6 +2007,7 @@ class GridCameraWidget(QWidget):
             dx = first_waypoint[0] - rx
             dy = first_waypoint[1] - ry
             target_yaw = math.atan2(dy, dx)
+            print(first_waypoint[0], first_waypoint[1], target_yaw)
 
         # print(type(robot_id), type(first_waypoint[0]), type(first_waypoint[1]), type(target_yaw))
         self.ros_node.publish_target_pose(robot_id, first_waypoint[0], first_waypoint[1], target_yaw)
@@ -2410,7 +2453,7 @@ class GridCameraWidget(QWidget):
         self.robot_list.clear()
         for robot_id in sorted(self.robot_positions.keys()):
             robot_data = self.robot_positions[robot_id]
-            self.robot_list.addItem(f"로봇{robot_id}: 감지됨")
+            self.robot_list.addItem(f"로봇{robot_id}: 감지됨 태그{robot_data["tag_id"]}")
 
     def real_coords_to_grid(self, real_x, real_y):
         """실제 좌표를 그리드 좌표로 변환"""
@@ -2471,6 +2514,9 @@ class GridCameraWidget(QWidget):
                 f"로봇{self.setting_goal_for_robot} 목표 설정 중..."
             )
 
+    def plan_robot_path(self):
+
+
     def plan_robot_paths(self):
         """로봇 경로 계획 실행"""
         if not self.enable_path_planning or not self.robot_goals:
@@ -2504,8 +2550,8 @@ class GridCameraWidget(QWidget):
                 )
 
                 # A* 경로를 실제 주행용 웨이포인트로 변환 및 발행
-                if self.enable_robot_control:
-                    self.publish_path_as_waypoints(robot_id, path)
+                # if self.enable_robot_control:
+                self.publish_path_as_waypoints(robot_id, path)
             else:
                 print(f"🛣️ 로봇{robot_id}: 목표에 도달하였거나 경로를 찾을 수 없습니다.")
 
@@ -2532,6 +2578,40 @@ class GridCameraWidget(QWidget):
             # 모든 로봇 정지
             self.stop_all_robots()
 
+    def _compute_yaw_for_target(self, robot_id: int, target_index: int) -> float:
+        """
+        웨이포인트 방향(yaw, rad) 계산.
+        1) 웨이포인트에 yaw 값이 직접 들어있으면 그걸 사용 (x,y,yaw 지원)
+        2) 다음 웨이포인트가 있으면 (현재WP -> 다음WP) 방향을 사용
+        3) 아니면 (로봇 현재 위치 -> 현재WP) 방향을 사용
+        4) 모두 없으면 0.0
+        """
+        wps = self.robot_waypoints.get(robot_id) or []
+        if not (0 <= target_index < len(wps)):
+            return 0.0
+
+        wp = wps[target_index]
+        # (x, y, yaw) 형태를 허용
+        if isinstance(wp, (list, tuple)) and len(wp) >= 3:
+            try:
+                return float(wp[2])
+            except Exception:
+                pass  # 아래 계산으로 폴백
+
+        # (현재WP -> 다음WP)로 방향 계산
+        if target_index + 1 < len(wps):
+            x1, y1 = wps[target_index][0], wps[target_index][1]
+            x2, y2 = wps[target_index + 1][0], wps[target_index + 1][1]
+            return math.atan2(y2 - y1, x2 - x1)
+
+        # (로봇 현재 위치 -> 현재WP)로 방향 계산
+        if robot_id in self.robot_positions and self.robot_positions[robot_id].get("real_coords"):
+            rx, ry = self.robot_positions[robot_id]["real_coords"]
+            tx, ty = wps[target_index][0], wps[target_index][1]
+            return math.atan2(ty - ry, tx - rx)
+
+        return 0.0
+
     def start_waypoint_mission(self):
         """웨이포인트 미션 시작"""
         if not self.robot_waypoints:
@@ -2555,9 +2635,9 @@ class GridCameraWidget(QWidget):
             if waypoints and robot_id in self.robot_positions:
                 first_waypoint = waypoints[0]
                 if self.ros_node:
-                    self.ros_node.publish_target_pose(
-                        robot_id, first_waypoint[0], first_waypoint[1]
-                    )
+                    first_x, first_y = first_waypoint[0], first_waypoint[1]
+                    yaw0 = self._compute_yaw_for_target(robot_id, 0)
+                    self.ros_node.publish_target_pose(robot_id, first_x, first_y, yaw0)
                     self.robot_target_published[robot_id] = True
                     print(
                         f"📡 로봇{robot_id}에 첫 번째 웨이포인트 전송: {first_waypoint}"
@@ -2687,11 +2767,13 @@ class GridCameraWidget(QWidget):
                     # 다음 웨이포인트로 경로 계획
                     next_waypoint = waypoints[current_index + 1]
                     self.plan_to_waypoint(robot_id, next_waypoint)
+                    print(f"웨이포인트{current_index}")
 
                     # 다음 웨이포인트를 ROS2로 발행
                     if self.enable_robot_control and self.ros_node:
                         next_x, next_y = next_waypoint
-                        self.ros_node.publish_target_pose(robot_id, next_x, next_y)
+                        yaw_next = math.atan2(next_y - robot_y, next_x - robot_x)  # 진행방향 yaw
+                        self.ros_node.publish_target_pose(robot_id, next_x, next_y, yaw_next)
                         self.robot_target_published[robot_id] = True
 
                 self.update_waypoint_list()
@@ -2706,7 +2788,8 @@ class GridCameraWidget(QWidget):
                     and self.ros_node
                     and not self.robot_target_published.get(robot_id, False)
                 ):
-                    self.ros_node.publish_target_pose(robot_id, target_x, target_y)
+                    yaw_cur = math.atan2(target_y - robot_y, target_x - robot_x)
+                    self.ros_node.publish_target_pose(robot_id, target_x, target_y, yaw_cur)
                     self.robot_target_published[robot_id] = True
 
     def plan_to_waypoint(self, robot_id, target_waypoint):
@@ -2869,9 +2952,9 @@ class SingleButtonWidget(QWidget):
         self.setLayout(layout)
 
     def tasksimple(self):
-        self.camera.ros_node.publish_task(4, "IDLE", x=0.3, y=0.3, yaw=0, task_id=0)
+        self.camera.ros_node.publish_task(5, "LOAD", x=0.3, y=0.3, yaw=0)
         print("publish task topic")
-
+        print("5, 'LOAD', x=0.3, y=0.3, yaw=0")
 
 # ======================================================================
 # 메인 애플리케이션 클래스
