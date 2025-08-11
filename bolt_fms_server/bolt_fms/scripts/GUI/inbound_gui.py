@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QFont
 
-FASTAPI_SERVER_URL = "http://192.168.0.139:8000"
+FASTAPI_SERVER_URL = "http://127.0.0.1:8000"
 
 # ─────────────────────────────────────
 # ROS2 퍼블리셔 노드
@@ -40,7 +40,7 @@ class InboundApp(QWidget):
         self.load_inbound_data()
 
     def initUI(self):
-        self.setWindowTitle('물류센터 입고 관리 시스템 (FastAPI + ROS2)')
+        self.setWindowTitle('물류센터 입고 관리 시스템')
         self.setGeometry(100, 100, 1200, 800)
         main_layout = QVBoxLayout()
         self.setLayout(main_layout)

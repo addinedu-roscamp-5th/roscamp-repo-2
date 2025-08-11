@@ -16,7 +16,7 @@ class InboundApp(QWidget):
         """
         GUI 사용자 인터페이스를 초기화합니다.
         """
-        self.setWindowTitle('물류센터 입고 관리 시스템 (FastAPI 연동)')
+        self.setWindowTitle('물류센터 입고 관리 시스템')
         self.setGeometry(100, 100, 1200, 800)
 
         main_layout = QVBoxLayout()
