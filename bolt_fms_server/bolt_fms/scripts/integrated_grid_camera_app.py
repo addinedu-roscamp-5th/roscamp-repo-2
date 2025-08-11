@@ -63,6 +63,9 @@ from builtin_interfaces.msg import Time
 ROBOT_CONFIG = {
     1: 4,
     2: 2,
+    3: 1,
+    4: 5,
+    5: 6,
 }
 
 
@@ -403,7 +406,7 @@ class DBManager:
 
     def _url(self, endpoint: str) -> str:
         return f"{self.base_url}/{endpoint.lstrip('/')}"
-
+        
     def get(
         self, endpoint: str, params: dict | None = None, timeout: float | None = None
     ):
@@ -1963,7 +1966,7 @@ class GridCameraWidget(QWidget):
             dy = first_waypoint[1] - ry
             target_yaw = math.atan2(dy, dx)
 
-        print(type(robot_id), type(first_waypoint[0]), type(first_waypoint[1]), type(target_yaw))
+        # print(type(robot_id), type(first_waypoint[0]), type(first_waypoint[1]), type(target_yaw))
         self.ros_node.publish_target_pose(robot_id, first_waypoint[0], first_waypoint[1], target_yaw)
         self.robot_target_published[robot_id] = True
 
@@ -2592,27 +2595,27 @@ class GridCameraWidget(QWidget):
         self.update_obstacle_list()
 
     def set_test_waypoints(self):
-        pass
-    #     """테스트용 웨이포인트 설정"""
-    #     # 로봇 1에 대한 테스트 웨이포인트 (실제 좌표)
-    #     test_waypoints_robot1 = [
-    #         (0.5, 0.2),  # 첫 번째 웨이포인트
-    #         (1.2, 0.3),  # 두 번째 웨이포인트
-    #         (1.5, 0.7),  # 세 번째 웨이포인트
-    #         (0.8, 0.8),  # 마지막 웨이포인트
-    #     ]
+        # pass
+        """테스트용 웨이포인트 설정"""
+        # 로봇 1에 대한 테스트 웨이포인트 (실제 좌표)
+        test_waypoints_robot1 = [
+            (0.5, 0.2),  # 첫 번째 웨이포인트
+            (1.2, 0.3),  # 두 번째 웨이포인트
+            (1.5, 0.7),  # 세 번째 웨이포인트
+            (0.8, 0.8),  # 마지막 웨이포인트
+        ]
 
-    #     # 로봇 2에 대한 테스트 웨이포인트 (실제 좌표)
-    #     test_waypoints_robot2 = [
-    #         (1.8, 0.1),  # 첫 번째 웨이포인트
-    #         (1.0, 0.4),  # 두 번째 웨이포인트
-    #         (0.3, 0.6),  # 세 번째 웨이포인트
-    #     ]
+        # 로봇 2에 대한 테스트 웨이포인트 (실제 좌표)
+        test_waypoints_robot2 = [
+            (1.8, 0.1),  # 첫 번째 웨이포인트
+            (1.0, 0.4),  # 두 번째 웨이포인트
+            (0.3, 0.6),  # 세 번째 웨이포인트
+        ]
 
-    #     if 1 in ROBOT_CONFIG:
-    #         self.set_robot_waypoints(1, test_waypoints_robot1)
-    #     if 2 in ROBOT_CONFIG:
-    #         self.set_robot_waypoints(2, test_waypoints_robot2)
+        if 1 in ROBOT_CONFIG:
+            self.set_robot_waypoints(1, test_waypoints_robot1)
+        if 2 in ROBOT_CONFIG:
+            self.set_robot_waypoints(2, test_waypoints_robot2)
 
     def set_robot_waypoints(self, robot_id, waypoints):
         """로봇에 웨이포인트 리스트 설정
@@ -2847,6 +2850,29 @@ class InOutInventoryWidget(QWidget):
         load_rows(self.inventory_table, inventory_rows)
 
 
+class SingleButtonWidget(QWidget):
+    def __init__(self, parent=None, camera=None):
+        super().__init__(parent)
+        self.camera = camera
+        self.setWindowTitle("단일 버튼 위젯")
+
+        # 버튼 하나
+        self.button = QPushButton("눌러주세요")
+        self.button.setMinimumHeight(40)
+        self.button.clicked.connect(self.tasksimple)
+
+        # 레이아웃(가운데 정렬)
+        layout = QVBoxLayout(self)
+        layout.addStretch()
+        layout.addWidget(self.button, alignment=Qt.AlignCenter)
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def tasksimple(self):
+        self.camera.ros_node.publish_task(4, "IDLE", x=0.3, y=0.3, yaw=0, task_id=0)
+        print("publish task topic")
+
+
 # ======================================================================
 # 메인 애플리케이션 클래스
 # ======================================================================
@@ -2938,6 +2964,10 @@ class IntegratedGridCameraApp(QWidget):
         # 탭 3: 입출고 재고 내역 페이지
         self.table_widget = InOutInventoryWidget()
         self.tab_widget.addTab(self.table_widget, "📋 물류 입출고 재고 내역 확인")
+
+        # 탭 4: 테스트
+        self.test_widget = SingleButtonWidget(camera=self.camera_widget)
+        self.tab_widget.addTab(self.test_widget, "📋 테스트")
 
         layout.addWidget(self.tab_widget)
         self.setLayout(layout)
