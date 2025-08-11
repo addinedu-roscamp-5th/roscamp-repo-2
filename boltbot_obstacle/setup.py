@@ -15,6 +15,8 @@ setup(
         ('share/' + package_name + '/launch', ['launch/obstacle_yolo_launch.py']),
         # ── 여기에 모델 파일 포함 ──
         ('share/' + package_name + '/models', ['models/best.pt']),
+        # 여기가 브리지 내용
+        ('share/' + package_name + '/config',  ['config/bridge.yaml']),
     ],
     install_requires=[
         'setuptools',
