@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from database import SessionLocal
 from models import Rack, Location, Inventory
+from typing import Any
 
 # 1. 비어있는 가장 낮은 번호의 location_id를 찾는 함수
-def get_next_available_location_id(db: Session) -> int | None:
+def _get_next_available_location_id(db: Session) -> int | None:
     """
     Inventory에 등록되지 않은 location_id 중 가장 작은 값을 찾아서 반환합니다.
 
@@ -29,7 +30,7 @@ def get_next_available_location_id(db: Session) -> int | None:
 
 
 # 2. 로봇의 최종 x, y 좌표를 계산하는 함수
-def get_robot_coordinates(db: Session, location_id: int) -> tuple[float, float] | None:
+def _get_robot_coordinates(db: Session, location_id: int) -> dict[str, Any] | None:
     """
     주어진 location_id에 대한 로봇의 최종 x, y 좌표를 계산합니다.
 
@@ -62,53 +63,49 @@ def get_robot_coordinates(db: Session, location_id: int) -> tuple[float, float] 
 
     if x_diff < 0:
         x_coord = float(rack.x_start) - x_offset
+        yaw = 180  
     else:
         x_coord = float(rack.x_start) + x_offset
+        yaw = 0
         
     return {
         "x": x_coord,
         "y": y_coord,
+        "yaw": yaw,
         "rack": location.rack,
         "row_num": location.row_num,
         "col_num": location.col_num,
         "location_id": location.location_id
     }   
 
-
-# 3. 전체 로직 실행 예시
-def main():
+def find_next_robot_coordinates() -> dict[str, Any] | None:
     """
-    전체 로직을 실행하는 메인 함수입니다.
+    다음 입고할 위치와 해당 로봇 좌표를 한 번에 계산.
+    외부에서 인자 없이 호출 가능.
     """
     db = SessionLocal()
     try:
-        # 1단계: 다음 입고할 위치(location_id) 찾기
-        next_location_id = get_next_available_location_id(db)
-
-        if next_location_id:
-            print(f"✨ 다음으로 입고할 위치는 location_id: {next_location_id} 입니다.")
-
-            # 2단계: 해당 location_id에 대한 로봇 좌표 계산
-            # location_info = get_robot_coordinates(db, next_location_id)
-            location_info = get_robot_coordinates(db, 7)
-
-            if location_info:
-                print(f"--- 상세 정보 ---")
-                print(f"➡️ Location ID: {location_info['location_id']}")
-                print(f"➡️ Rack 번호: {location_info['rack']}")
-                print(f"➡️ 선반 행/열 번호: {location_info['row_num']}행, {location_info['col_num']}열")
-                print(f"--- 최종 로봇 좌표 ---")
-                print(f"📦 (x: {location_info['x']}, y: {location_info['y']})")
-            else:
-                print("좌표를 계산할 수 없습니다.")
-        else:
+        next_location_id = _get_next_available_location_id(db)
+        if not next_location_id:
             print("📦 현재 입고 가능한 빈 위치가 없습니다.")
-
+            return None
+        return _get_robot_coordinates(db, next_location_id)
     except Exception as e:
-        print(f"⛔️ 오류가 발생했습니다: {e}")
+        print(f"⛔ 오류 발생: {e}")
+        return None
     finally:
         db.close()
 
-if __name__ == "__main__":
-    main()
 
+# 3. 전체 로직 실행 예시
+if __name__ == "__main__":
+    coords = find_next_robot_coordinates()
+    if coords:
+        print(f"➡️  Location ID: {coords['location_id']}")
+        print(f"➡️  Rack 번호: {coords['rack']}")
+        print(f"➡️  행/열: {coords['row_num']}행, {coords['col_num']}열")
+        print(f"📍 로봇 좌표: (x={coords['x']}, y={coords['y']}, yaw={coords['yaw']})")
+
+# # Example usage:
+# from select_location import find_next_robot_coordinates
+# coords = find_next_robot_coordinates()
