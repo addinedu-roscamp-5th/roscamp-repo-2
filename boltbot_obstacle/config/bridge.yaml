@@ -1,0 +1,42 @@
+bridges:
+  # Robot 31 (포트 9991)
+  - topic_name: /robot_9991/frame_stop
+    type_name: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 31
+  - topic_name: /robot_9991/obstacle/dynamic
+    type_name: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 31
+  - topic_name: /robot_9991/obstacle/box_center_x
+    type_name: std_msgs/msg/Float64
+    from_domain: 100
+    to_domain: 31
+
+  # Robot 32 (포트 9992)
+  - topic_name: /robot_9992/frame_stop
+    type_name: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 32
+  - topic_name: /robot_9992/obstacle/dynamic
+    type_name: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 32
+  - topic_name: /robot_9992/obstacle/box_center_x
+    type_name: std_msgs/msg/Float64
+    from_domain: 100
+    to_domain: 32
+
+  # Robot 33 (포트 9993)
+  - topic_name: /robot_9993/frame_stop
+    type_name: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 33
+  - topic_name: /robot_9993/obstacle/dynamic
+    type_name: std_msgs/msg/Bool
+    from_domain: 100
+    to_domain: 33
+  - topic_name: /robot_9993/obstacle/box_center_x
+    type_name: std_msgs/msg/Float64
+    from_domain: 100
+    to_domain: 33
