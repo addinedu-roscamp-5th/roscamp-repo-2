@@ -340,6 +340,7 @@ class TaskManager:
             self.task_queue.put((step.priority, time.time(), step))
 
     def assign_tasks(self):
+        """Taskmanager 작업 할당 실시!"""
         messages = []
         new_queue = PriorityQueue()
 
@@ -722,7 +723,6 @@ class RobotStatusPublisher(Node):
         if robot_id not in self.target_pose_publishers:
             return
 
-
         # PoseStamped 메시지 생성
         pose_msg = PoseStamped()
 
@@ -1002,7 +1002,7 @@ class TaskManagerWidget(QWidget):
 
     def __init__(self, task_manager, camera=None):
         super().__init__()
-        self.manager = task_manager
+        self.manager : TaskManager = task_manager
         self.camera = camera
         self._dispatched = set()
         self.counter = 1
@@ -1035,7 +1035,7 @@ class TaskManagerWidget(QWidget):
         button_layout = QHBoxLayout()
 
         self.btn_add_inbound = QPushButton("📦 입고 작업 추가")
-        self.btn_add_inbound.clicked.connect(self.add_inbound)
+        self.btn_add_inbound.clicked.connect(self.test_add_inbound)
         self.btn_add_inbound.setStyleSheet(
             "QPushButton { padding: 10px; font-size: 14px; }"
         )
@@ -1049,7 +1049,7 @@ class TaskManagerWidget(QWidget):
         button_layout.addWidget(self.btn_add_outbound)
 
         self.btn_assign = QPushButton("🚚 작업 할당 실행")
-        self.btn_assign.clicked.connect(self.auto_assign_tasks)
+        self.btn_assign.clicked.connect(self.assign_tasks)
         self.btn_assign.setStyleSheet(
             "QPushButton { padding: 10px; font-size: 14px; background-color: #4CAF50; color: white; }"
         )
@@ -1177,6 +1177,20 @@ class TaskManagerWidget(QWidget):
         self.counter += 1
         self.update_tables()
 
+    def test_add_inbound(self):
+        """입고 작업 추가"""
+        box_num = 7
+        process : ProcessTask = self.manager.create_inbound_tasks("ib_0",box_num)
+        
+        task = create_inbound_task(f"입고_{self.counter}")
+        if task is None:
+            print("입고 실패")
+            return
+        self.manager.add_process_task(task)
+        self.add_log(f"➕ 입고 작업 {task.task_id} 추가됨")
+        self.counter += 1
+        self.update_tables()
+
     def add_outbound(self):
         """출고 작업 추가"""
         task = create_outbound_task(f"출고_{self.counter}")
@@ -1192,7 +1206,7 @@ class TaskManagerWidget(QWidget):
         for line in msg.split("\n"):
             if line.strip():
                 self.add_log(line)
-        self._plan_and_publish_for_new_assignments()
+        # self._plan_and_publish_for_new_assignments()
         self.update_tables()
 
     def assign_tasks(self):
@@ -1202,8 +1216,6 @@ class TaskManagerWidget(QWidget):
         for line in msg.split("\n"):
             if line.strip():
                 self.add_log(line)
-
-        # ✅ 새로 할당된 모바일 MOVE 작업들을 경로계획하고 발행
 
         self.update_tables()
 
@@ -1226,11 +1238,13 @@ class TaskManagerWidget(QWidget):
 
         for comp in self.manager.all_process_tasks:
             for t in comp.steps:
-                if (t.status == TaskStatus.ASSIGNED and
-                    t.robot_type == RobotType.MOBILE and
-                    t.task_type == TaskType.MOVE and
-                    t.task_id not in self._dispatched and
-                    t.assigned_robot):
+                if (
+                    t.status == TaskStatus.ASSIGNED
+                    and t.robot_type == RobotType.MOBILE
+                    and t.task_type == TaskType.MOVE
+                    and t.task_id not in self._dispatched
+                    and t.assigned_robot
+                ):
 
                     rid = t.assigned_robot
                     tx, ty = t.location if t.location else (None, None)
@@ -1238,26 +1252,32 @@ class TaskManagerWidget(QWidget):
                         continue
 
                     # 현재 로봇 위치(카메라 추정 우선, 없으면 TaskManager의 마지막 위치)
-                    if (rid in getattr(self.camera, "robot_positions", {}) and self.camera.robot_positions[rid].get("real_coords")):
+                    if rid in getattr(
+                        self.camera, "robot_positions", {}
+                    ) and self.camera.robot_positions[rid].get("real_coords"):
                         rx, ry = self.camera.robot_positions[rid]["real_coords"]
                     else:
                         rx, ry = self.manager.robots[rid].position
 
                     start = self._real_to_cell(rx, ry)
-                    goal  = self._real_to_cell(tx, ty)
+                    goal = self._real_to_cell(tx, ty)
 
                     yaw = 0.0
                     path = []
                     if start and goal:
                         # ✅ 8방향 A* 경로
-                        path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
+                        path = self.camera.path_planner.astar_pathfind(
+                            start, goal, exclude_robot=rid
+                        )
 
                     if path and len(path) > 1:
                         # 경로를 웨이포인트로 저장/시각화하고 첫 점을 즉시 target_pose로 발행
                         self.camera.publish_path_as_waypoints(rid, path)
 
                         # 첫 웨이포인트 기준 yaw 계산
-                        first_real = self.camera.grid_to_real_coords(path[1][0], path[1][1])
+                        first_real = self.camera.grid_to_real_coords(
+                            path[1][0], path[1][1]
+                        )
                         dx, dy = first_real[0] - rx, first_real[1] - ry
                         yaw = math.atan2(dy, dx)  # ✅ 라디안 0은 x+ 방향
                     else:
@@ -1276,7 +1296,9 @@ class TaskManagerWidget(QWidget):
                     #     )
 
                     self._dispatched.add(t.task_id)
-                    self.add_log(f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행")
+                    self.add_log(
+                        f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행"
+                    )
 
     def complete_task(self, robot_id):
         """로봇 작업 완료 처리"""
@@ -1641,7 +1663,7 @@ class GridCameraWidget(QWidget):
         # AprilTag 감지
         if self.enable_apriltag:
             self.detect_apriltags()
-        
+
         # # ROS2 토픽으로 발행
         # self.publish_robot_positions()
 
@@ -1935,8 +1957,8 @@ class GridCameraWidget(QWidget):
     def draw_yaw_arrow(self, center, yaw, color):
         """로봇의 yaw 방향을 화살표로 표시"""
         arrow_length = 30
-        arrow_end_x = int(center[0] + arrow_length * math.sin(yaw + math.pi/2))
-        arrow_end_y = int(center[1] + arrow_length * math.cos(yaw + math.pi/2))
+        arrow_end_x = int(center[0] + arrow_length * math.sin(yaw + math.pi / 2))
+        arrow_end_y = int(center[1] + arrow_length * math.cos(yaw + math.pi / 2))
         # print(f"center{center} x {arrow_end_x} y {arrow_end_y}", )
 
         # 메인 화살표 선
@@ -1944,7 +1966,7 @@ class GridCameraWidget(QWidget):
             self.current_frame,
             center,
             (arrow_end_x, arrow_end_y),
-            (0,0,0),
+            (0, 0, 0),
             3,
             tipLength=0.3,
         )
@@ -2068,14 +2090,16 @@ class GridCameraWidget(QWidget):
             dx = next_waypoint[0] - first_waypoint[0]
             dy = next_waypoint[1] - first_waypoint[1]
             target_yaw = math.atan2(dy, dx)
-        # if robot_id in self.robot_positions and self.robot_positions[robot_id].get(
-        #     "real_coords"
-        # ):
-        #     rx, ry = self.robot_positions[robot_id]["real_coords"]
-        #     dx = first_waypoint[0] - rx
-        #     dy = first_waypoint[1] - ry
-        #     target_yaw = math.atan2(dy, dx)
-            print(f"웨이포인트{self.robot_current_waypoint_index[robot_id]}: x 좌표 {first_waypoint[0]},y 좌표 {first_waypoint[1]},yaw {target_yaw}")
+            # if robot_id in self.robot_positions and self.robot_positions[robot_id].get(
+            #     "real_coords"
+            # ):
+            #     rx, ry = self.robot_positions[robot_id]["real_coords"]
+            #     dx = first_waypoint[0] - rx
+            #     dy = first_waypoint[1] - ry
+            #     target_yaw = math.atan2(dy, dx)
+            print(
+                f"웨이포인트{self.robot_current_waypoint_index[robot_id]}: x 좌표 {first_waypoint[0]},y 좌표 {first_waypoint[1]},yaw {target_yaw}"
+            )
 
         # print(type(robot_id), type(first_waypoint[0]), type(first_waypoint[1]), type(target_yaw))
         self.ros_node.publish_target_pose(
@@ -2182,8 +2206,12 @@ class GridCameraWidget(QWidget):
                 cell_row = (row + r_offset) / self.grid_rows
                 cell_col = (col + c_offset) / self.grid_cols
 
-                top_point = corners[2] + cell_col * (corners[3] - corners[2])    # 좌상, 우상
-                bottom_point = corners[0] + cell_col * (corners[1] - corners[0]) # 좌하, 우하
+                top_point = corners[2] + cell_col * (
+                    corners[3] - corners[2]
+                )  # 좌상, 우상
+                bottom_point = corners[0] + cell_col * (
+                    corners[1] - corners[0]
+                )  # 좌하, 우하
                 cell_point = top_point + cell_row * (bottom_point - top_point)
                 cell_corners.append(cell_point.astype(int))
 
@@ -2236,8 +2264,12 @@ class GridCameraWidget(QWidget):
                 cell_row = (row + 0.5) / self.grid_rows
                 cell_col = (col + 0.5) / self.grid_cols
 
-                top_point = corners[2] + cell_col * (corners[3] - corners[2])    # 좌상, 우상
-                bottom_point = corners[0] + cell_col * (corners[1] - corners[0]) # 좌하, 우하
+                top_point = corners[2] + cell_col * (
+                    corners[3] - corners[2]
+                )  # 좌상, 우상
+                bottom_point = corners[0] + cell_col * (
+                    corners[1] - corners[0]
+                )  # 좌하, 우하
                 cell_center = top_point + cell_row * (bottom_point - top_point)
                 path_points.append(cell_center.astype(int))
 
@@ -2331,8 +2363,12 @@ class GridCameraWidget(QWidget):
                 cell_col = (col + c_offset) / self.grid_cols
 
                 # 새로운 순서에 맞게 인덱스 변경
-                top_point = corners[2] + cell_col * (corners[3] - corners[2])    # 좌상, 우상
-                bottom_point = corners[0] + cell_col * (corners[1] - corners[0]) # 좌하, 우하
+                top_point = corners[2] + cell_col * (
+                    corners[3] - corners[2]
+                )  # 좌상, 우상
+                bottom_point = corners[0] + cell_col * (
+                    corners[1] - corners[0]
+                )  # 좌하, 우하
                 cell_point = top_point + cell_row * (bottom_point - top_point)
                 cell_corners.append(cell_point.astype(int))
                 # print(cell_corners)
@@ -2849,16 +2885,17 @@ class GridCameraWidget(QWidget):
                         after_next = waypoints[current_index + 2]
                         yaw_next = math.atan2(
                             after_next[1] - next_waypoint[1],
-                            after_next[0] - next_waypoint[0]
+                            after_next[0] - next_waypoint[0],
                         )
                     else:
                         # 마지막 웨이포인트면 로봇 → 다음 방향
                         yaw_next = math.atan2(
-                            next_waypoint[1] - robot_y,
-                            next_waypoint[0] - robot_x
+                            next_waypoint[1] - robot_y, next_waypoint[0] - robot_x
                         )
 
-                    print(f"다음 웨이포인트를 발행 {robot_id, next_waypoint[0], next_waypoint[1], yaw_next}")
+                    print(
+                        f"다음 웨이포인트를 발행 {robot_id, next_waypoint[0], next_waypoint[1], yaw_next}"
+                    )
                     if self.enable_robot_control and self.ros_node:
                         self.ros_node.publish_target_pose(
                             robot_id, next_waypoint[0], next_waypoint[1], yaw_next
@@ -2880,13 +2917,14 @@ class GridCameraWidget(QWidget):
                     and not self.robot_target_published.get(robot_id, False)
                 ):
                     yaw_cur = math.atan2(target_y - robot_y, target_x - robot_x)
-                    print(f"현재 웨이포인트를 발행 {robot_id,target_x,target_y,yaw_cur}")
+                    print(
+                        f"현재 웨이포인트를 발행 {robot_id,target_x,target_y,yaw_cur}"
+                    )
 
                     self.ros_node.publish_target_pose(
                         robot_id, target_x, target_y, yaw_cur
                     )
                     self.robot_target_published[robot_id] = True
-
 
     # def update_waypoint_following(self):
     #     """웨이포인트 팔로잉 업데이트"""
