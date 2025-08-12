@@ -1,6 +1,8 @@
 [submodule "jetcobot"]
 	path = jetcobot
 	url = https://github.com/kemjensak/jetcobot
+	branch = master
 [submodule "common_pkgs/apriltag_ros"]
 	path = common_pkgs/apriltag_ros
 	url = https://github.com/kemjensak/apriltag_ros
+	branch = master
