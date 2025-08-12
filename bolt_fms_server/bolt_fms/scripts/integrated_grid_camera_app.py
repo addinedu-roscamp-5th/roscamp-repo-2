@@ -189,6 +189,56 @@ class TaskManager:
         self.on_task_assigned = (
             None
         )  # type: Optional[Callable[[Task, Robot, Optional[ProcessTask]], None]]
+        
+        self.robot_arm_parking_spots = [
+            (15, 20), # 주차 스팟 1
+            (16, 20), # 주차 스팟 2
+            (17, 20)  # 주차 스팟 3
+        ]
+        self.parking_spot_status = {spot: False for spot in self.robot_arm_parking_spots} # True면 점유됨
+        
+        self.outbound_parking_spots = [
+            (30, 45), # 출고 주차 스팟 1
+            (31, 45), # 출고 주차 스팟 2
+            (32, 45)  # 출고 주차 스팟 3
+        ]
+        self.outbound_parking_status = {spot: False for spot in self.outbound_parking_spots}
+        
+    def assign_inbound_parking_task(self, robot, inbound_task):
+        closest_spot = None
+        min_distance = float('inf')
+
+        # 비어있는 주차 스팟 중에서 가장 가까운 곳을 찾습니다.
+        for spot, occupied in self.parking_spot_status.items():
+            if not occupied:
+                distance = self.calculate_distance(robot.position, spot)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_spot = spot
+
+        if closest_spot:
+            inbound_task.location = closest_spot
+            self.parking_spot_status[closest_spot] = True # 주차 스팟 점유 상태 업데이트
+            self.camera.path_planner.plan_path(robot, closest_spot)
+            # ... 이후 작업 할당 및 로봇 이동 로직
+                
+    def assign_outbound_parking_task(self, robot, outbound_task):
+        closest_spot = None
+        min_distance = float('inf')
+
+        # 비어있는 출고 주차 스팟 중에서 가장 가까운 곳을 찾습니다.
+        for spot, occupied in self.outbound_parking_status.items():
+            if not occupied:
+                distance = self.calculate_distance(robot.position, spot)
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_spot = spot
+
+        if closest_spot:
+            outbound_task.location = closest_spot
+            self.outbound_parking_status[closest_spot] = True # 주차 스팟 점유 상태 업데이트
+            self.path_planner.plan_path(robot, closest_spot)
+            # ... 이후 작업 할당 및 로봇 이동 로직
 
     # def create_inbound_tasks(self, process_id, total_amount, batch_size=2):
     #     """
@@ -235,84 +285,84 @@ class TaskManager:
     #     return ProcessTask(process_id, tasks)
 
     # TaskManager 내부
-    def create_inbound_tasks(self, process_id, total_amount=None, batch_size=2):
-        if total_amount is None:
-            total_amount = batch_size
-        tasks = []
-        remaining = total_amount
-        batch_idx = 1
-        while remaining > 0:
-            current_batch = min(batch_size, remaining)
+    # def create_inbound_tasks(self, process_id, total_amount=None, batch_size=2):
+    #     if total_amount is None:
+    #         total_amount = batch_size
+    #     tasks = []
+    #     remaining = total_amount
+    #     batch_idx = 1
+    #     while remaining > 0:
+    #         current_batch = min(batch_size, remaining)
 
-            # 입고 호출(MOBILE)
-            tasks.append(
-                Task(
-                    f"{process_id}-b{batch_idx}-call",
-                    TaskType.MOVE,
-                    RobotType.MOBILE,
-                    (0.1, 0.1),
-                    meta={"qty": current_batch},
-                )
-            )
+    #         # 입고 호출(MOBILE)
+    #         tasks.append(
+    #             Task(
+    #                 f"{process_id}-b{batch_idx}-call",
+    #                 TaskType.MOVE,
+    #                 RobotType.MOBILE,
+    #                 (0.1, 0.1),
+    #                 meta={"qty": current_batch},
+    #             )
+    #         )
 
-            # 적재(ARM)
-            tasks.append(
-                Task(
-                    f"{process_id}-b{batch_idx}-load",
-                    TaskType.LOAD,
-                    RobotType.ARM,
-                    (0.2, 0.2),
-                    meta={"qty": current_batch},
-                )
-            )
+    #         # 적재(ARM)
+    #         tasks.append(
+    #             Task(
+    #                 f"{process_id}-b{batch_idx}-load",
+    #                 TaskType.LOAD,
+    #                 RobotType.ARM,
+    #                 (0.2, 0.2),
+    #                 meta={"qty": current_batch},
+    #             )
+    #         )
 
-            # 진열로 이동(MOBILE)
-            tasks.append(
-                Task(
-                    f"{process_id}-b{batch_idx}-shelve",
-                    TaskType.MOVE,
-                    RobotType.MOBILE,
-                    (1, 0.5),
-                    meta={"qty": current_batch},
-                )
-            )
+    #         # 진열로 이동(MOBILE)
+    #         tasks.append(
+    #             Task(
+    #                 f"{process_id}-b{batch_idx}-shelve",
+    #                 TaskType.MOVE,
+    #                 RobotType.MOBILE,
+    #                 (1, 0.5),
+    #                 meta={"qty": current_batch},
+    #             )
+    #         )
 
-            tasks.append(
-                Task(
-                    f"{process_id}-confirm",
-                    TaskType.WAIT_USER,
-                    RobotType.MOBILE,
-                    (1, 0.5),
-                )
-            )
-            remaining -= current_batch
-            batch_idx += 1
+    #         tasks.append(
+    #             Task(
+    #                 f"{process_id}-confirm",
+    #                 TaskType.WAIT_USER,
+    #                 RobotType.MOBILE,
+    #                 (1, 0.5),
+    #             )
+    #         )
+    #         remaining -= current_batch
+    #         batch_idx += 1
 
-        print(f"[TaskGen] {process_id}: total={total_amount}, batches={len(tasks)}")
+    #     print(f"[TaskGen] {process_id}: total={total_amount}, batches={len(tasks)}")
 
-        return ProcessTask(process_id, tasks)
+    #     return ProcessTask(process_id, tasks)
 
-    def create_inbound_process_from_row(self, row: dict):
-        pid = f"IN-{row.get('ib_id', row.get('id', 'UNKNOWN'))}"
-        proc = self.create_inbound_tasks(pid)  # 기존 생성기 재사용
-        for s in proc.steps:
-            if not getattr(s, "location", None) and s.task_type.name == "MOVE":
-                s.location = (
-                    LOC["IN_CALL"] if s.step_id.endswith("_1") else LOC["IN_SHELF"]
-                )
-        proc.meta = {"kind": "inbound", "record": row}
-        return proc
+    # def create_inbound_process_from_row(self, row: dict):
+    #     pid = f"IN-{row.get('ib_id', row.get('id', 'UNKNOWN'))}"
+    #     proc = self.create_inbound_tasks(pid)  # 기존 생성기 재사용
+    #     for s in proc.steps:
+    #         if not getattr(s, "location", None) and s.task_type.name == "MOVE":
+    #             s.location = (
+    #                 LOC["IN_CALL"] if s.step_id.endswith("_1") else LOC["IN_SHELF"]
+    #             )
+    #     proc.meta = {"kind": "inbound", "record": row}
+    #     return proc
 
-    def create_outbound_process_from_row(self, row: dict):
-        pid = f"OUT-{row.get('ob_id', row.get('id', 'UNKNOWN'))}"
-        proc = self.create_outbound_tasks(pid)
-        for s in proc.steps:
-            if not getattr(s, "location", None) and s.task_type.name == "MOVE":
-                s.location = (
-                    LOC["OUT_PICK"] if s.step_id.endswith("_1") else LOC["OUT_DROP"]
-                )
-        proc.meta = {"kind": "outbound", "record": row}
-        return proc
+    # def create_outbound_process_from_row(self, row: dict):
+    #     pid = f"OUT-{row.get('ob_id', row.get('id', 'UNKNOWN'))}"
+    #     proc = self.create_outbound_tasks(pid)
+    #     for s in proc.steps:
+    #         if not getattr(s, "location", None) and s.task_type.name == "MOVE":
+    #             s.location = (
+    #                 LOC["OUT_PICK"] if s.step_id.endswith("_1") else LOC["OUT_DROP"]
+    #             )
+    #     proc.meta = {"kind": "outbound", "record": row}
+    #     return proc
 
     def make_process_task(self, process_type: str, row: dict):
         if process_type not in ("입고", "출고") or not row:
@@ -381,6 +431,93 @@ class TaskManager:
                 messages.append(
                     f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}"
                 )
+
+                if callable(self.on_task_assigned):
+                    try:
+                        self.on_task_assigned(task, robot, process)
+                    except Exception as e:
+                        print(f"[TaskManager] plan hook error: {e}")
+
+            else:
+                messages.append(
+                    f"⏸ No robot available for Task {task.task_id} ({task.robot_type.name})"
+                )
+                new_queue.put((task.priority, time.time(), task))
+
+        self.task_queue = new_queue
+        return "\n".join(messages)
+    
+    # TaskManager 클래스의 assign_tasks_waypoint 메서드
+    def assign_tasks_waypoint(self):
+        """Taskmanager 작업 할당 실시!"""
+        messages = []
+        new_queue = PriorityQueue()
+
+        while not self.task_queue.empty():
+            _, _, task = self.task_queue.get()
+
+            process = next((c for c in self.all_process_tasks if task in c.steps), None)
+
+            if (
+                process
+                and task.robot_type == RobotType.MOBILE
+                and process.assigned_mobile_robot_id
+            ):
+                robot = self.robots.get(process.assigned_mobile_robot_id)
+                if robot and robot.is_available():
+                    assigned = True
+                else:
+                    robot = None
+            else:
+                robot = self.select_robot(task)
+
+            if robot:
+                task.status = TaskStatus.ASSIGNED
+                task.assigned_robot = robot.id
+                robot.status = RobotStatus.BUSY
+                robot.current_task = task
+
+                if (
+                    task.robot_type == RobotType.MOBILE
+                    and process
+                    and not process.assigned_mobile_robot_id
+                ):
+                    process.assigned_mobile_robot_id = robot.id
+
+                messages.append(
+                    f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}"
+                )
+
+                # --- 이 부분에 경로 계획 로직을 추가합니다. ---
+                # 할당된 로봇의 타입과 작업 유형에 따라 경로를 계획합니다.
+                if task.robot_type == RobotType.MOBILE and task.task_type == TaskType.MOVE:
+                    # task 객체에 `location`이 있다고 가정하고 목적지로 설정
+                    if task.location:
+                        # 현재 로봇 위치와 작업의 목적지를 사용합니다.
+                        # 기존 코드에는 self.path_planner가 없으므로, planner 인스턴스가 필요합니다.
+                        # 예: self.path_planner = MultiRobotPathPlanner(grid_rows, grid_cols)
+                        # 이 예시는 planner가 있다고 가정합니다.
+                        start_pos = robot.position
+                        goal_pos = task.location
+                        
+                        # (실제 좌표 -> 그리드 셀 변환 로직이 필요합니다. 아래는 가상의 예시입니다.)
+                        # start_cell = real_to_cell(start_pos)
+                        # goal_cell = real_to_cell(goal_pos)
+
+                        # planner.astar_pathfind는 그리드 좌표를 사용합니다.
+                        # 예시에서는 바로 사용하도록 작성하겠습니다.
+                        path = self.path_planner.astar_pathfind(start_pos, goal_pos, exclude_robot=robot.id)
+
+                        if path:
+                            # 계획된 경로를 로봇에게 전달하는 로직
+                            # 예: self.ros_node.publish_path_as_waypoints(robot.id, path)
+                            print(f"✔️ 로봇 {robot.id}에게 경로가 계획되었습니다: {path}")
+                            # 경로를 task나 robot 객체에 저장하여 추후에 사용할 수 있습니다.
+                            task.planned_path = path 
+                        else:
+                            print(f"❌ 로봇 {robot.id}의 경로를 찾을 수 없습니다.")
+
+                # --- 경로 계획 로직 끝 ---
 
                 if callable(self.on_task_assigned):
                     try:
@@ -859,6 +996,7 @@ class MultiRobotPathPlanner:
     ) -> List[PathNode]:
         """인접 노드 가져오기 (8방향)"""
         neighbors = []
+        # directions 리스트에 (0, 0) 추가
         directions = [
             (-1, -1),
             (-1, 0),
@@ -984,13 +1122,7 @@ def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> Proc
     """출고 작업 생성: 물건을 픽업해서 배송하는 작업"""
     steps = [
         Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
-        Task(
-            f"{process_id}_2",
-            TaskType.WAIT_USER,
-            RobotType.MOBILE,
-            pick_pos,
-            priority=1,
-        ),
+        Task(f"{process_id}_2", TaskType.WAIT_USER, RobotType.MOBILE, pick_pos, priority=1),
         Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
         Task(f"{process_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
     ]
@@ -1003,7 +1135,7 @@ class TaskManagerWidget(QWidget):
     def __init__(self, task_manager, camera=None):
         super().__init__()
         self.manager : TaskManager = task_manager
-        self.camera = camera
+        self.camera : GridCameraWidget = camera
         self._dispatched = set()
         self.counter = 1
 
@@ -1031,6 +1163,17 @@ class TaskManagerWidget(QWidget):
         description.setStyleSheet("color: gray; margin-bottom: 20px;")
         layout.addWidget(description)
 
+        # 로봇 상태 정보
+        robot_status_label = QLabel("🤖 로봇 상태:")
+        layout.addWidget(robot_status_label)
+
+        self.robot_status_table = QTableWidget()
+        self.robot_status_table.setColumnCount(6)
+        robot_headers = ["로봇 ID", "타입", "상태", "현재 작업", "현재 위치", "배터리" ]
+        self.robot_status_table.setHorizontalHeaderLabels(robot_headers)
+        self.robot_status_table.setMaximumHeight(200)
+        layout.addWidget(self.robot_status_table)
+
         # 작업 추가 버튼들
         button_layout = QHBoxLayout()
 
@@ -1042,14 +1185,14 @@ class TaskManagerWidget(QWidget):
         button_layout.addWidget(self.btn_add_inbound)
 
         self.btn_add_outbound = QPushButton("📤 출고 작업 추가")
-        self.btn_add_outbound.clicked.connect(self.add_outbound)
+        self.btn_add_outbound.clicked.connect(self.test_add_outbound)
         self.btn_add_outbound.setStyleSheet(
             "QPushButton { padding: 10px; font-size: 14px; }"
         )
         button_layout.addWidget(self.btn_add_outbound)
 
         self.btn_assign = QPushButton("🚚 작업 할당 실행")
-        self.btn_assign.clicked.connect(self.assign_tasks)
+        self.btn_assign.clicked.connect(self.test_assign_tasks_waypoints)
         self.btn_assign.setStyleSheet(
             "QPushButton { padding: 10px; font-size: 14px; background-color: #4CAF50; color: white; }"
         )
@@ -1096,16 +1239,6 @@ class TaskManagerWidget(QWidget):
         self.table.setHorizontalHeaderLabels(headers)
         layout.addWidget(self.table)
 
-        # 로봇 상태 정보
-        robot_status_label = QLabel("🤖 로봇 상태:")
-        layout.addWidget(robot_status_label)
-
-        self.robot_status_table = QTableWidget()
-        self.robot_status_table.setColumnCount(5)
-        robot_headers = ["로봇 ID", "타입", "상태", "현재 작업", "위치"]
-        self.robot_status_table.setHorizontalHeaderLabels(robot_headers)
-        self.robot_status_table.setMaximumHeight(200)
-        layout.addWidget(self.robot_status_table)
 
         self.setLayout(layout)
 
@@ -1176,20 +1309,73 @@ class TaskManagerWidget(QWidget):
         self.add_log(f"➕ 입고 작업 {task.task_id} 추가됨")
         self.counter += 1
         self.update_tables()
+        
+    def create_inbound_task(process_id, target_pos=(0, 0)):
+        """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
+        steps = [
+            Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, target_pos),
+            Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, target_pos),
+            Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, target_pos),
+            Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, target_pos),
+        ]
+        return ProcessTask(process_id, steps)
+
+
+    def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> ProcessTask:
+        """출고 작업 생성: 물건을 픽업해서 배송하는 작업"""
+        steps = [
+            Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
+            Task(
+                f"{process_id}_2",
+                TaskType.WAIT_USER,
+                RobotType.MOBILE,
+                pick_pos,
+                priority=1,
+            ),
+            Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
+            Task(f"{process_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
+        ]
+        return ProcessTask(process_id, steps)
 
     def test_add_inbound(self):
         """입고 작업 추가"""
-        box_num = 7
-        process : ProcessTask = self.manager.create_inbound_tasks("ib_0",box_num)
+        # DB 풀링
         
-        task = create_inbound_task(f"입고_{self.counter}")
-        if task is None:
-            print("입고 실패")
-            return
-        self.manager.add_process_task(task)
-        self.add_log(f"➕ 입고 작업 {task.task_id} 추가됨")
-        self.counter += 1
-        self.update_tables()
+        # 입고 박스 추가
+        box_num = 3
+        batch_size = 4
+        
+        # 박스 개수를 배치사이즈만큼 프로세스 반복
+        remaining = box_num
+        while remaining > 0:
+            current_batch = min(batch_size, remaining)
+            # 입고 프로세스 생성
+            process_task = create_inbound_task(f"입고_{self.counter}")
+            self.manager.add_process_task(process_task)
+            self.add_log(f"➕ 입고 작업 {process_task.task_id} 추가됨")
+            self.counter += 1                
+            remaining -= current_batch
+            self.update_tables()
+            
+    def test_add_outbound(self):
+        """입고 작업 추가"""
+        # DB 풀링
+        
+        # 입고 박스 추가
+        item_amount = 4
+        batch_size = 4
+        
+        # 박스 개수를 배치사이즈만큼 프로세스 반복
+        remaining = item_amount
+        while remaining > 0:
+            current_batch = min(batch_size, remaining)
+            # 입고 프로세스 생성
+            process_task = create_inbound_task(f"출고_{self.counter}")
+            self.manager.add_process_task(process_task)
+            self.add_log(f"📤 출고 작업 {process_task.task_id} 추가됨")
+            self.counter += 1                
+            remaining -= current_batch
+            self.update_tables()
 
     def add_outbound(self):
         """출고 작업 추가"""
@@ -1199,9 +1385,9 @@ class TaskManagerWidget(QWidget):
         self.counter += 1
         self.update_tables()
 
-    def auto_assign_tasks(self):
+    def test_assign_tasks_waypoints(self):
         """자동 작업 할당 실행"""
-        msg = self.manager.assign_tasks()
+        msg = self.manager.assign_tasks_waypoint()
         self.add_log("🚚 자동 작업 할당 실행됨")
         for line in msg.split("\n"):
             if line.strip():
@@ -1362,6 +1548,9 @@ class TaskManagerWidget(QWidget):
             self.robot_status_table.setItem(row, 3, QTableWidgetItem(current_task))
             self.robot_status_table.setItem(
                 row, 4, QTableWidgetItem(str(robot.position))
+            )
+            self.robot_status_table.setItem(
+                row, 5, QTableWidgetItem(str(92))
             )
 
             # 로봇 상태에 따른 색상
