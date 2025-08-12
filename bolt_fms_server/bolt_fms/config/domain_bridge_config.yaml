@@ -1,7 +1,7 @@
 # Name of the domain bridge, used for node naming and logging
 name: my_bridge
 
-to_domain: 0
+# to_domain: 0
 
 topics:
 
