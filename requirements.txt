@@ -12,3 +12,4 @@ SQLAlchemy
 pandas 
 google-generativeai 
 markdown
+pymysql

@@ -375,10 +375,6 @@ class ProcessTask:
     def is_mobile_robot_locked(self, robot_id):
         return self.assigned_mobile_robot_id == robot_id and not self.is_done()
 
-
-
-
-
 # 파일 상단 근처에
 LOC = {
     "IN_CALL": (0.10, 0.10),
@@ -531,7 +527,7 @@ class TaskManager:
 
             if (
                 process
-                and task.robot_type == RobotType.MOBILE
+                and task.robot_type == "MOBILE"
                 and process.assigned_mobile_robot_id
             ):
                 robot = self.robots.get(process.assigned_mobile_robot_id)
@@ -543,9 +539,9 @@ class TaskManager:
                 robot = self.select_robot(task)
 
             if robot:
-                task.status = TaskStatus.ASSIGNED
+                task.status = "ASSIGNED"
                 task.assigned_robot = robot.id
-                robot.status = RobotStatus.BUSY
+                robot.status = task.status
                 robot.current_task = task
 
                 if (
@@ -3442,21 +3438,21 @@ class InOutInventoryWidget(QWidget):
         left_splitter.addWidget(
             self._wrap_with_label("📤 출고 내역", self.outbound_table)
         )
-        left_splitter.setSizes([300, 300])  # 좌상/좌하 초기 높이 비율
+        left_splitter.setSizes([1, 1])  # ✅ 좌상/좌하 초기 높이 비율을 균일하게 설정
 
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.addWidget(
-            self._wrap_with_label("📦 재고 내역", self.outbound_table)
+            self._wrap_with_label("📦 재고 내역", self.inventory_table) # ✅ self.inventory_table로 수정
         )
         right_splitter.addWidget(
             self._wrap_with_label("❓ 물류 챗봇", self.chatbot_widget)
         )
-        right_splitter.setSizes([300, 300])  # 좌상/좌하 초기 높이 비율
+        right_splitter.setSizes([1, 1])  # ✅ 재고/챗봇 초기 높이 비율을 균일하게 설정
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter.addWidget(left_splitter)
         main_splitter.addWidget(right_splitter)
-        main_splitter.setSizes([700, 500])  # 좌/우 초기 폭 비율
+        main_splitter.setSizes([1, 1])  # ✅ 좌/우 초기 폭 비율을 균일하게 설정
 
         # ── 탭 전체 레이아웃 ────────────────────────────────
         outer = QHBoxLayout(self)
