@@ -48,6 +48,8 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QStatusBar,
+    QTextEdit,
+    QLineEdit
 )
 
 # === ROS 2 ===
@@ -55,7 +57,7 @@ import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, Quaternion, Twist
-from std_msgs.msg import Header
+from std_msgs.msg import String, Float32
 from builtin_interfaces.msg import Time
 
 
@@ -64,7 +66,235 @@ ROBOT_CONFIG = {
     1: 4,
     2: 2,
     3: 563,
+    4: 0,
+    5: 0,
 }
+    
+class Robot:
+    """로봇의 상태와 정보를 담는 클래스"""
+
+    def __init__(
+        self,
+        robot_id: int,
+        tag_id: int,
+        robot_type: str,
+        current_pose: tuple = (0.0, 0.0, 0.0),
+        target_pose: tuple = (0.0, 0.0, 0.0),
+        battery: float = 100.0,
+        task: dict =  {"task_type": "IDLE", "target_pose": (0,0,0)},
+        status: str = "PENDING",
+        joint_angles: list = None,
+    ):
+        self.robot_id = robot_id
+        self.tag_id = tag_id
+        self.robot_type = robot_type
+        self.current_pose = current_pose  # (x, y, yaw)
+        self.target_pose = target_pose  # (x, y, yaw)
+        self.battery = battery
+        self.task = task  # {"name": "MOVE", "location": (x, y, yaw)}
+        self.status = status  # "IDLE", "BUSY", "CHARGING" 등
+        self.joint_angles = joint_angles or []
+
+    def __repr__(self):
+        return f"Robot(ID: {self.robot_id}, Tag: {self.tag_id}, Type: {self.robot_type}, Status: {self.status})"
+
+    def is_available(self) -> bool:
+        """로봇이 작업 가능한 상태인지 확인"""
+        return self.status == "IDLE"
+
+    def update_pose(self, x: float, y: float, yaw: float):
+        """로봇의 현재 포즈 업데이트"""
+        self.current_pose = (x, y, yaw)
+        # print(self.current_pose)
+
+    def assign_task(self, task_type: str, target_pose: tuple):
+        """로봇에게 새로운 작업 할당"""
+        self.task = {"task_type": task_type, "target_pose": target_pose}
+        self.status = "ASSIGNED"
+        self.target_pose = target_pose
+
+    def complete_task(self):
+        """현재 작업 완료 처리"""
+        self.task = None
+        self.status = "IDLE"
+        self.target_pose = (0.0, 0.0, 0.0)
+
+# ======================================================================
+# ROS2 통신 관련 클래스들
+# ======================================================================
+from bolt_fms.msg import TaskSimple  # (A) 선택 시
+
+
+class RobotStatusNode(Node):
+    """로봇 위치 정보를 ROS2 토픽으로 발행하는 노드"""
+
+    def __init__(self, robots : dict = None):
+        super().__init__("robot_publisher")
+
+        self.robots = robots if robots is not None else {}
+        
+        for robot_id in robots.keys():
+            # 상태 구독자 (현재 상태)
+            status_topic = f"/robot{robot_id}/task_status"
+            self.create_subscription(
+                String,
+                status_topic,
+                lambda msg, robot_id=robot_id: self.status_callback(msg, robot_id),
+                10
+            )
+            self.get_logger().info(f"Created pose subscriber for {status_topic}")
+
+            # 카메라 포즈 구독자 (현재 위치)
+            battery_topic = f"/robot{robot_id}/battery"
+            self.create_subscription(
+                Float32,
+                battery_topic,
+                lambda msg, robot_id=robot_id: self.battery_callback(msg, robot_id),
+                10
+            )
+            self.get_logger().info(f"Created pose subscriber for {battery_topic}")
+            if robot_id in self.robots:
+                if self.robots[robot_id].robot_type == "MOBILE":
+                    self.robots[robot_id].status = "PENDING"
+                    self.robots[robot_id].battery = 100.0
+
+        # 각 로봇에 대한 퍼블리셔 생성
+        self.pose_publishers = {}
+        self.target_pose_publishers = {}
+        self.cmd_vel_publishers = {}
+        self.task_publishers = {}
+
+        for robot_id in ROBOT_CONFIG.keys():
+            # 카메라 포즈 퍼블리셔 (현재 위치)
+            pose_topic = f"/robot{robot_id}/camera_pose"
+            pose_pub = self.create_publisher(PoseStamped, pose_topic, 10)
+            self.pose_publishers[robot_id] = pose_pub
+            self.get_logger().info(f"Created pose publisher for {pose_topic}")
+
+            # 목표 포즈 퍼블리셔 (웨이포인트)
+            target_topic = f"/robot{robot_id}/target_pose"
+            target_pub = self.create_publisher(PoseStamped, target_topic, 10)
+            self.target_pose_publishers[robot_id] = target_pub
+            self.get_logger().info(f"Created target pose publisher for {target_topic}")
+
+            # 속도 제어 퍼블리셔
+            cmd_vel_topic = f"/robot{robot_id}/cmd_vel"
+            cmd_vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
+            self.cmd_vel_publishers[robot_id] = cmd_vel_pub
+            self.get_logger().info(f"Created cmd_vel publisher for {cmd_vel_topic}")
+
+            task_topic = f"/robot{robot_id}/task"
+            task_pub = self.create_publisher(TaskSimple, task_topic, 10)  # robot_id별로
+            self.task_publishers[robot_id] = task_pub
+            self.get_logger().info(f"Create task simple publisher for {task_topic}")
+
+    # 로봇 구독 ==============================================================================
+    def status_callback(self, msg, robot_id):
+        """로봇의 상태 메시지를 수신하면 호출되는 콜백 함수"""
+        if robot_id in self.robots:
+            # ❌ Robot 객체의 battery 속성에 실제 값을 할당
+            self.robots[robot_id].status = msg.data
+            self.get_logger().info(f"Robot {robot_id} status updated: {msg.data}")
+
+    def battery_callback(self, msg, robot_id):
+        """로봇의 배터리 메시지를 수신하면 호출되는 콜백 함수"""
+        if robot_id in self.robots:
+            # ❌ Robot 객체의 battery 속성에 실제 값을 할당
+            self.robots[robot_id].battery = msg.data
+            # self.get_logger().info(f"Robot {robot_id} battery updated: {msg.data:.2f}%")
+        
+    # 로봇 발행 ==============================================================================
+    def publish_robot_pose(self, robot_id, x, y, yaw):
+        """로봇 위치를 PoseStamped 메시지로 발행"""
+        if robot_id not in self.pose_publishers:
+            return
+
+        # PoseStamped 메시지 생성
+        pose_msg = PoseStamped()
+
+        # Header 설정
+        pose_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_msg.header.frame_id = "map"
+
+        # Position 설정
+        pose_msg.pose.position.x = float(x)
+        pose_msg.pose.position.y = float(y)
+        pose_msg.pose.position.z = 0.0
+
+        pose_msg.pose.orientation.z = float(math.sin(yaw / 2.0))
+        pose_msg.pose.orientation.w = float(math.cos(yaw / 2.0))
+
+        # 메시지 발행
+        # if(robot_id == 2):
+        #     self.get_logger().error(f"camera_pose x={x}, y={y}, yaw={yaw}")
+        publisher = self.pose_publishers.get(robot_id)
+        if publisher:
+            publisher.publish(pose_msg)
+        # print(self.pose_publishers[robot_id])
+
+    def publish_task(
+        self, robot_id: int, task_type: str, x: float, y: float, yaw: float
+    ):
+        msg = TaskSimple()
+        msg.task_type = task_type
+        msg.target_pose.header.frame_id = f"pinky{robot_id}/base_link"
+        now = self.get_clock().now().to_msg()
+        msg.target_pose.header.stamp = now
+        msg.target_pose.pose.position.x = x
+        msg.target_pose.pose.position.y = y
+        msg.target_pose.pose.position.z = 0.0
+
+        msg.target_pose.pose.orientation.z = float(math.sin(yaw / 2.0))
+        msg.target_pose.pose.orientation.w = float(math.cos(yaw / 2.0))
+
+        pub = self.task_publishers.get(robot_id)
+        if pub:
+            print("task publish")
+            pub.publish(msg)
+
+    def publish_target_pose(self, robot_id, x, y, yaw):
+        """목표 위치(웨이포인트)를 ROS2 토픽으로 발행"""
+        if robot_id not in self.target_pose_publishers:
+            return
+
+        # PoseStamped 메시지 생성
+        pose_msg = PoseStamped()
+
+        # Header 설정
+        pose_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_msg.header.frame_id = "map"
+
+        # Position 설정
+        pose_msg.pose.position.x = float(x)
+        pose_msg.pose.position.y = float(y)
+        pose_msg.pose.position.z = 0.0
+        pose_msg.pose.orientation.z = math.sin(yaw / 2.0)
+        pose_msg.pose.orientation.w = math.cos(yaw / 2.0)
+
+        # 메시지 발행
+        self.get_logger().error(f"target_pose x={x}, y={y}, yaw={yaw}")
+        self.target_pose_publishers[robot_id].publish(pose_msg)
+
+    def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
+        """로봇 속도 제어 명령 발행"""
+        if robot_id not in self.cmd_vel_publishers:
+            return
+
+        # Twist 메시지 생성
+        twist_msg = Twist()
+        twist_msg.linear.x = float(linear_x)
+        twist_msg.linear.y = float(linear_y)
+        twist_msg.linear.z = 0.0
+        twist_msg.angular.x = 0.0
+        twist_msg.angular.y = 0.0
+        twist_msg.angular.z = float(angular_z)
+
+        # 메시지 발행
+        self.cmd_vel_publishers[robot_id].publish(twist_msg)
+
+    def stop_robot(self, robot_id):
+        """로봇 정지"""
+        self.publish_cmd_vel(robot_id, 0.0, 0.0, 0.0)
 
 
 # ======================================================================
@@ -146,19 +376,7 @@ class ProcessTask:
         return self.assigned_mobile_robot_id == robot_id and not self.is_done()
 
 
-class Robot:
-    def __init__(
-        self, robot_id, robot_type: RobotType, position=(0, 0), target_pos=None
-    ):
-        self.id = robot_id
-        self.robot_type = robot_type
-        self.status = RobotStatus.IDLE
-        self.position = position
-        self.target_pos = self.position
-        self.current_task: Task = None
 
-    def is_available(self):
-        return self.status == RobotStatus.IDLE
 
 
 # 파일 상단 근처에
@@ -172,16 +390,11 @@ LOC = {
 
 
 class TaskManager:
-    def __init__(self):
+    def __init__(self, camera = None):
         self.task_queue = PriorityQueue()
         self.all_process_tasks: list[ProcessTask] = []
-        self.robots = {
-            1: Robot(1, RobotType.MOBILE, (0, 0)),
-            2: Robot(2, RobotType.MOBILE, (10, 10)),
-            3: Robot(3, RobotType.MOBILE, (20, 10)),
-            4: Robot(4, RobotType.ARM, (3, 10)),
-            5: Robot(5, RobotType.ARM, (3, 2)),
-        }
+        self.camera : GridCameraWidget = camera
+        self.robots = self.camera.robots
         self.db = None
         # 초기화 시 한 번
         self.seen_inbound_ids = set()
@@ -219,7 +432,7 @@ class TaskManager:
         if closest_spot:
             inbound_task.location = closest_spot
             self.parking_spot_status[closest_spot] = True # 주차 스팟 점유 상태 업데이트
-            self.camera.path_planner.plan_path(robot, closest_spot)
+            # self.camera.path_planner.plan_path(robot, closest_spot)
             # ... 이후 작업 할당 및 로봇 이동 로직
                 
     def assign_outbound_parking_task(self, robot, outbound_task):
@@ -237,151 +450,8 @@ class TaskManager:
         if closest_spot:
             outbound_task.location = closest_spot
             self.outbound_parking_status[closest_spot] = True # 주차 스팟 점유 상태 업데이트
-            self.path_planner.plan_path(robot, closest_spot)
+            # self.path_planner.plan_path(robot, closest_spot)
             # ... 이후 작업 할당 및 로봇 이동 로직
-
-    # def create_inbound_tasks(self, process_id, total_amount, batch_size=2):
-    #     """
-    #     입고 수량(total_amount)을 batch_size 개씩 나누어
-    #     move → load 순서로 반복되는 작업 목록을 생성.
-
-    #     예: total_amount=5, batch_size=2 → [move(2), load(2), move(2), load(2), move(1), load(1)]
-    #     """
-    #     tasks = []
-    #     remaining = total_amount
-    #     while remaining > 0:
-    #         current_batch = min(batch_size, remaining)  # 이번 작업에 처리할 수량
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id} 입고<-호출",
-    #                 TaskType.MOVE,
-    #                 RobotType.MOBILE,
-    #                 (0.1, 0.1),
-    #             )
-    #         )  # 입고 위치 (0.1,0.1)
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id} 입고->적재", TaskType.LOAD, RobotType.ARM, (0.2, 0.2)
-    #             )
-    #         )  # 입고에서 핑키 위치 (0.2,0.2)
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id} 입고->진열",
-    #                 TaskType.MOVE,
-    #                 RobotType.MOBILE,
-    #                 (1, 0.5),
-    #             )
-    #         )  # 진열 위치 (가능한 location)
-    #         remaining -= current_batch
-
-    #     tasks.append(
-    #         Task(
-    #             f"{process_id} 진열->작업자{i}",
-    #             TaskType.WAIT_USER,
-    #             RobotType.MOBILE,
-    #             (1, 0.5),
-    #         )
-    #     )  # 기본적으로 진열 위치이고 작업자가 진열한 위치가 베스트
-    #     return ProcessTask(process_id, tasks)
-
-    # TaskManager 내부
-    # def create_inbound_tasks(self, process_id, total_amount=None, batch_size=2):
-    #     if total_amount is None:
-    #         total_amount = batch_size
-    #     tasks = []
-    #     remaining = total_amount
-    #     batch_idx = 1
-    #     while remaining > 0:
-    #         current_batch = min(batch_size, remaining)
-
-    #         # 입고 호출(MOBILE)
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id}-b{batch_idx}-call",
-    #                 TaskType.MOVE,
-    #                 RobotType.MOBILE,
-    #                 (0.1, 0.1),
-    #                 meta={"qty": current_batch},
-    #             )
-    #         )
-
-    #         # 적재(ARM)
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id}-b{batch_idx}-load",
-    #                 TaskType.LOAD,
-    #                 RobotType.ARM,
-    #                 (0.2, 0.2),
-    #                 meta={"qty": current_batch},
-    #             )
-    #         )
-
-    #         # 진열로 이동(MOBILE)
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id}-b{batch_idx}-shelve",
-    #                 TaskType.MOVE,
-    #                 RobotType.MOBILE,
-    #                 (1, 0.5),
-    #                 meta={"qty": current_batch},
-    #             )
-    #         )
-
-    #         tasks.append(
-    #             Task(
-    #                 f"{process_id}-confirm",
-    #                 TaskType.WAIT_USER,
-    #                 RobotType.MOBILE,
-    #                 (1, 0.5),
-    #             )
-    #         )
-    #         remaining -= current_batch
-    #         batch_idx += 1
-
-    #     print(f"[TaskGen] {process_id}: total={total_amount}, batches={len(tasks)}")
-
-    #     return ProcessTask(process_id, tasks)
-
-    # def create_inbound_process_from_row(self, row: dict):
-    #     pid = f"IN-{row.get('ib_id', row.get('id', 'UNKNOWN'))}"
-    #     proc = self.create_inbound_tasks(pid)  # 기존 생성기 재사용
-    #     for s in proc.steps:
-    #         if not getattr(s, "location", None) and s.task_type.name == "MOVE":
-    #             s.location = (
-    #                 LOC["IN_CALL"] if s.step_id.endswith("_1") else LOC["IN_SHELF"]
-    #             )
-    #     proc.meta = {"kind": "inbound", "record": row}
-    #     return proc
-
-    # def create_outbound_process_from_row(self, row: dict):
-    #     pid = f"OUT-{row.get('ob_id', row.get('id', 'UNKNOWN'))}"
-    #     proc = self.create_outbound_tasks(pid)
-    #     for s in proc.steps:
-    #         if not getattr(s, "location", None) and s.task_type.name == "MOVE":
-    #             s.location = (
-    #                 LOC["OUT_PICK"] if s.step_id.endswith("_1") else LOC["OUT_DROP"]
-    #             )
-    #     proc.meta = {"kind": "outbound", "record": row}
-    #     return proc
-
-    def make_process_task(self, process_type: str, row: dict):
-        if process_type not in ("입고", "출고") or not row:
-            return
-
-        if process_type == "입고":
-            rid = row.get("ib_id", row.get("id"))
-            if rid in self.seen_inbound_ids:
-                return
-            process = self.create_inbound_process_from_row(row)
-            self.seen_inbound_ids.add(rid)
-        else:  # 출고
-            rid = row.get("ob_id", row.get("id"))
-            if rid in self.seen_outbound_ids:
-                return
-            process = self.create_outbound_process_from_row(row)
-            self.seen_outbound_ids.add(rid)
-
-        self.add_process_task(process)  # 기존 큐 등록 함수
 
     def add_process_task(self, process: ProcessTask):
         self.all_process_tasks.append(process)
@@ -389,63 +459,63 @@ class TaskManager:
         if step:
             self.task_queue.put((step.priority, time.time(), step))
 
-    def assign_tasks(self):
-        """Taskmanager 작업 할당 실시!"""
-        messages = []
-        new_queue = PriorityQueue()
+    # def assign_tasks(self):
+    #     """Taskmanager 작업 할당 실시!"""
+    #     messages = []
+    #     new_queue = PriorityQueue()
 
-        while not self.task_queue.empty():
-            _, _, task = self.task_queue.get()
+    #     while not self.task_queue.empty():
+    #         _, _, task = self.task_queue.get()
 
-            # process task 찾기
-            process = next((c for c in self.all_process_tasks if task in c.steps), None)
+    #         # process task 찾기
+    #         process = next((c for c in self.all_process_tasks if task in c.steps), None)
 
-            if (
-                process
-                and task.robot_type == RobotType.MOBILE
-                and process.assigned_mobile_robot_id
-            ):
-                # mobile 작업이면서 이미 로봇이 지정된 경우 해당 로봇 강제 사용
-                robot = self.robots.get(process.assigned_mobile_robot_id)
-                if robot and robot.is_available():
-                    assigned = True
-                else:
-                    robot = None  # 지정 로봇이 사용불가면 할당  보류
-            else:
-                robot = self.select_robot(task)
+    #         if (
+    #             process
+    #             and task.robot_type == RobotType.MOBILE
+    #             and process.assigned_mobile_robot_id
+    #         ):
+    #             # mobile 작업이면서 이미 로봇이 지정된 경우 해당 로봇 강제 사용
+    #             robot = self.robots.get(process.assigned_mobile_robot_id)
+    #             if robot and robot.is_available():
+    #                 assigned = True
+    #             else:
+    #                 robot = None  # 지정 로봇이 사용불가면 할당  보류
+    #         else:
+    #             robot = self.select_robot(task)
 
-            if robot:
-                task.status = TaskStatus.ASSIGNED
-                task.assigned_robot = robot.id
-                robot.status = RobotStatus.BUSY
-                robot.current_task = task
+    #         if robot:
+    #             task.status = TaskStatus.ASSIGNED
+    #             task.assigned_robot = robot.id
+    #             robot.status = RobotStatus.BUSY
+    #             robot.current_task = task
 
-                # 처음 할당된 mobile 로봇 기억
-                if (
-                    task.robot_type == RobotType.MOBILE
-                    and process
-                    and not process.assigned_mobile_robot_id
-                ):
-                    process.assigned_mobile_robot_id = robot.id
+    #             # 처음 할당된 mobile 로봇 기억
+    #             if (
+    #                 task.robot_type == RobotType.MOBILE
+    #                 and process
+    #                 and not process.assigned_mobile_robot_id
+    #             ):
+    #                 process.assigned_mobile_robot_id = robot.id
 
-                messages.append(
-                    f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}"
-                )
+    #             messages.append(
+    #                 f"✅ Task {task.task_id} [{task.task_type.name}] assigned to Robot {robot.id}"
+    #             )
 
-                if callable(self.on_task_assigned):
-                    try:
-                        self.on_task_assigned(task, robot, process)
-                    except Exception as e:
-                        print(f"[TaskManager] plan hook error: {e}")
+    #             if callable(self.on_task_assigned):
+    #                 try:
+    #                     self.on_task_assigned(task, robot, process)
+    #                 except Exception as e:
+    #                     print(f"[TaskManager] plan hook error: {e}")
 
-            else:
-                messages.append(
-                    f"⏸ No robot available for Task {task.task_id} ({task.robot_type.name})"
-                )
-                new_queue.put((task.priority, time.time(), task))
+    #         else:
+    #             messages.append(
+    #                 f"⏸ No robot available for Task {task.task_id} ({task.robot_type.name})"
+    #             )
+    #             new_queue.put((task.priority, time.time(), task))
 
-        self.task_queue = new_queue
-        return "\n".join(messages)
+    #     self.task_queue = new_queue
+    #     return "\n".join(messages)
     
     # TaskManager 클래스의 assign_tasks_waypoint 메서드
     def assign_tasks_waypoint(self):
@@ -455,6 +525,7 @@ class TaskManager:
 
         while not self.task_queue.empty():
             _, _, task = self.task_queue.get()
+            # print(type(task))
 
             process = next((c for c in self.all_process_tasks if task in c.steps), None)
 
@@ -491,32 +562,42 @@ class TaskManager:
                 # --- 이 부분에 경로 계획 로직을 추가합니다. ---
                 # 할당된 로봇의 타입과 작업 유형에 따라 경로를 계획합니다.
                 if task.robot_type == RobotType.MOBILE and task.task_type == TaskType.MOVE:
-                    # task 객체에 `location`이 있다고 가정하고 목적지로 설정
+                    # task 객체에 `location`과 `final_yaw`가 있다고 가정
                     if task.location:
-                        # 현재 로봇 위치와 작업의 목적지를 사용합니다.
-                        # 기존 코드에는 self.path_planner가 없으므로, planner 인스턴스가 필요합니다.
-                        # 예: self.path_planner = MultiRobotPathPlanner(grid_rows, grid_cols)
-                        # 이 예시는 planner가 있다고 가정합니다.
-                        start_pos = robot.position
-                        goal_pos = task.location
-                        
-                        # (실제 좌표 -> 그리드 셀 변환 로직이 필요합니다. 아래는 가상의 예시입니다.)
-                        # start_cell = real_to_cell(start_pos)
-                        # goal_cell = real_to_cell(goal_pos)
+                        # goal_pos = task.location
+                        goal_pos = (1.0,0.5)
+                        # final_yaw = task.final_yaw  # task 객체에 final_yaw가 있다고 가정
+                        final_yaw = 2.0  # task 객체에 final_yaw가 있다고 가정
 
-                        # planner.astar_pathfind는 그리드 좌표를 사용합니다.
+                        # (실제 좌표 -> 그리드 셀 변환 로직이 필요합니다.)
                         # 예시에서는 바로 사용하도록 작성하겠습니다.
-                        path = self.path_planner.astar_pathfind(start_pos, goal_pos, exclude_robot=robot.id)
 
-                        if path:
-                            # 계획된 경로를 로봇에게 전달하는 로직
-                            # 예: self.ros_node.publish_path_as_waypoints(robot.id, path)
-                            print(f"✔️ 로봇 {robot.id}에게 경로가 계획되었습니다: {path}")
-                            # 경로를 task나 robot 객체에 저장하여 추후에 사용할 수 있습니다.
-                            task.planned_path = path 
+                        # 🎯 최종 포즈(위치 + 방향)를 포함하여 목표 설정 및 경로 계획을 요청
+                        # self.camera.set_robot_goal 함수가 final_yaw를 받도록 수정해야 합니다.
+                        self.camera.set_robot_goal(
+                            pos=None,
+                            robot_id=robot.id,
+                            real_pos=goal_pos,
+                            final_yaw=final_yaw
+                        )
+                        self.camera.plan_robot_paths()
+
+                        # 이 부분은 원래 코드에 없었지만, 경로가 정상적으로 계획되었는지 확인하는 데 유용합니다.
+                        if robot.id in self.camera.robot_paths:
+                            print(f"✔️ 로봇 {robot.id}에게 경로가 계획되었습니다.")
+                            print(f"    - 최종 목표: {goal_pos} 위치, {final_yaw} yaw")
                         else:
                             print(f"❌ 로봇 {robot.id}의 경로를 찾을 수 없습니다.")
+                elif task.robot_type == RobotType.ARM and task.task_type == TaskType.LOAD:
+                    # arm robot id 에 Load task 발행
+                    self.camera.ros_node.publish_task(5, "LOAD", x=0.6, y=0.28, yaw=0)
+                    print("robot arm !! publish task topic !!")
+                    print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
+                    pass
 
+                elif task.robot_type == RobotType.ARM and task.task_type == TaskType.UNLOAD:
+                    # arm robot id 에 Load task 발행
+                    pass
                 # --- 경로 계획 로직 끝 ---
 
                 if callable(self.on_task_assigned):
@@ -699,9 +780,11 @@ class DBWatcherWorker(QObject):
         self.db = db
         self.timer = QTimer(self)
         self.timer.setInterval(interval_ms)
-        self.timer.timeout.connect(self._poll)
-        self.last_seen_dttm = None  # 마지막으로 본 시각 (ISO string)
-        self.last_seen_id = None  # 또는 마지막 ID (정수)
+        self.timer.timeout.connect(self._poll_inbound)
+        self.last_seen_ib_dttm = None  # 마지막으로 본 시각 (ISO string)
+        self.last_seen_ib_id = None  # 또는 마지막 ID (s정수)
+        self.last_seen_ob_dttm = None  # 마지막으로 본 시각 (ISO string)
+        self.last_seen_ob_id = None  # 또는 마지막 ID (정수)
 
     def start(self):
         self.timer.start()
@@ -711,7 +794,7 @@ class DBWatcherWorker(QObject):
         self.timer.stop()
         self.stopped.emit()
 
-    def _poll(self):
+    def _poll_inbound(self):
         rows = self.db.get("/inbounds")
         if not rows or not isinstance(rows, list):
             return
@@ -721,14 +804,14 @@ class DBWatcherWorker(QObject):
         except Exception:
             return
 
-        if self.last_seen_dttm is None:
-            self.last_seen_dttm = latest["ib_dttm"]
-            self.last_seen_id = latest.get("ib_id")
+        if self.last_seen_ib_dttm is None:
+            self.last_seen_ib_dttm = latest["ib_dttm"]
+            self.last_seen_ib_id = latest.get("ib_id")
             return
 
         new_rows = []
         try:
-            last_dt = datetime.fromisoformat(self.last_seen_dttm)
+            last_dt = datetime.fromisoformat(self.last_seen_ib_dttm)
             for r in rows:
                 if datetime.fromisoformat(r["ib_dttm"]) > last_dt:
                     new_rows.append(r)
@@ -738,173 +821,9 @@ class DBWatcherWorker(QObject):
         if new_rows:
             new_rows.sort(key=lambda r: r["ib_dttm"])
             newest = max(new_rows, key=lambda r: r["ib_dttm"])
-            self.last_seen_dttm = newest["ib_dttm"]
-            self.last_seen_id = newest.get("ib_id")
+            self.last_seen_ib_dttm = newest["ib_dttm"]
+            self.last_seen_ib_id = newest.get("ib_id")
             self.inbound_updated.emit(new_rows)
-
-
-# ======================================================================
-# ROS2 통신 관련 클래스들
-# ======================================================================
-from bolt_fms.msg import TaskSimple  # (A) 선택 시
-
-
-class RobotStatusPublisher(Node):
-    """로봇 위치 정보를 ROS2 토픽으로 발행하는 노드"""
-
-    def __init__(self):
-        super().__init__("robot_pose_publisher")
-
-        # 각 로봇에 대한 퍼블리셔 생성
-        self.pose_publishers = {}
-        self.target_pose_publishers = {}
-        self.cmd_vel_publishers = {}
-        self.task_publishers = {}
-
-        for robot_id in ROBOT_CONFIG.keys():
-            # 카메라 포즈 퍼블리셔 (현재 위치)
-            pose_topic = f"/robot{robot_id}/camera_pose"
-            pose_pub = self.create_publisher(PoseStamped, pose_topic, 10)
-            self.pose_publishers[robot_id] = pose_pub
-            self.get_logger().info(f"Created pose publisher for {pose_topic}")
-
-            # 목표 포즈 퍼블리셔 (웨이포인트)
-            target_topic = f"/robot{robot_id}/target_pose"
-            target_pub = self.create_publisher(PoseStamped, target_topic, 10)
-            self.target_pose_publishers[robot_id] = target_pub
-            self.get_logger().info(f"Created target pose publisher for {target_topic}")
-
-            # 속도 제어 퍼블리셔
-            cmd_vel_topic = f"/robot{robot_id}/cmd_vel"
-            cmd_vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
-            self.cmd_vel_publishers[robot_id] = cmd_vel_pub
-            self.get_logger().info(f"Created cmd_vel publisher for {cmd_vel_topic}")
-
-            task_topic = f"/robot{robot_id}/task"
-            task_pub = self.create_publisher(TaskSimple, task_topic, 10)  # robot_id별로
-            self.task_publishers[robot_id] = task_pub
-            self.get_logger().info(f"Create task simple publisher for {task_topic}")
-
-    def publish_robot_pose(self, robot_id, x, y, yaw):
-        """로봇 위치를 PoseStamped 메시지로 발행"""
-        if robot_id not in self.pose_publishers:
-            return
-
-        # PoseStamped 메시지 생성
-        pose_msg = PoseStamped()
-
-        # Header 설정
-        pose_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_msg.header.frame_id = "map"
-
-        # Position 설정
-        pose_msg.pose.position.x = float(x)
-        pose_msg.pose.position.y = float(y)
-        pose_msg.pose.position.z = 0.0
-
-        # Orientation 설정 (yaw를 quaternion으로 변환)
-        # quat = self.euler_to_quaternion(0, 0, yaw)
-        # pose_msg.pose.orientation.x = quat[0]
-        # pose_msg.pose.orientation.y = quat[1]
-        # pose_msg.pose.orientation.z = quat[2]
-        # pose_msg.pose.orientation.w = quat[3]
-
-        pose_msg.pose.orientation.z = float(math.sin(yaw / 2.0))
-        pose_msg.pose.orientation.w = float(math.cos(yaw / 2.0))
-
-        # 메시지 발행
-        # if(robot_id == 2):
-        #     self.get_logger().error(f"camera_pose x={x}, y={y}, yaw={yaw}")
-        self.pose_publishers[robot_id].publish(pose_msg)
-        # print(self.pose_publishers[robot_id])
-
-    def publish_task(
-        self, robot_id: int, task_type: str, x: float, y: float, yaw: float
-    ):
-        msg = TaskSimple()
-        msg.task_type = task_type
-        msg.target_pose.header.frame_id = "map"
-        now = self.get_clock().now().to_msg()
-        msg.target_pose.header.stamp = now
-        msg.target_pose.pose.position.x = x
-        msg.target_pose.pose.position.y = y
-        qx, qy, qz, qw = self.euler_to_quaternion(0.0, 0.0, yaw)
-        msg.target_pose.pose.orientation.x = qx
-        msg.target_pose.pose.orientation.y = qy
-        msg.target_pose.pose.orientation.z = qz
-        msg.target_pose.pose.orientation.w = qw
-        # msg.task_id = task_id
-
-        pub = self.task_publishers.get(robot_id)
-        if pub:
-            pub.publish(msg)
-
-    def euler_to_quaternion(self, roll, pitch, yaw):
-        """오일러 각을 쿼터니언으로 변환"""
-        cy = math.cos(yaw * 0.5)
-        sy = math.sin(yaw * 0.5)
-        cp = math.cos(pitch * 0.5)
-        sp = math.sin(pitch * 0.5)
-        cr = math.cos(roll * 0.5)
-        sr = math.sin(roll * 0.5)
-
-        qw = cr * cp * cy + sr * sp * sy
-        qx = sr * cp * cy - cr * sp * sy
-        qy = cr * sp * cy + sr * cp * sy
-        qz = cr * cp * sy - sr * sp * cy
-
-        return [qx, qy, qz, qw]
-
-    def publish_target_pose(self, robot_id, x, y, yaw):
-        """목표 위치(웨이포인트)를 ROS2 토픽으로 발행"""
-        if robot_id not in self.target_pose_publishers:
-            return
-
-        # PoseStamped 메시지 생성
-        pose_msg = PoseStamped()
-
-        # Header 설정
-        pose_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_msg.header.frame_id = "map"
-
-        # Position 설정
-        pose_msg.pose.position.x = float(x)
-        pose_msg.pose.position.y = float(y)
-        pose_msg.pose.position.z = 0.0
-        pose_msg.pose.orientation.z = math.sin(yaw / 2.0)
-        pose_msg.pose.orientation.w = math.cos(yaw / 2.0)
-
-        # 메시지 발행
-        self.get_logger().error(f"target_pose x={x}, y={y}, yaw={yaw}")
-        self.target_pose_publishers[robot_id].publish(pose_msg)
-
-        # for _ in range(5):  # 5번 발행
-        #     self.target_pose_publishers[robot_id].publish(pose_msg)
-        #     # self.ros_node.publish_target_pose(robot_id, x, y, yaw)
-        #     time.sleep(0.05)  # 50ms 간격
-        # self.get_logger().info(f"types: x={type(x)}, y={type(y)}, yaw={type(yaw)}")
-
-    def publish_cmd_vel(self, robot_id, linear_x=0.0, linear_y=0.0, angular_z=0.0):
-        pass
-        # """로봇 속도 제어 명령 발행"""
-        # if robot_id not in self.cmd_vel_publishers:
-        #     return
-
-        # # Twist 메시지 생성
-        # twist_msg = Twist()
-        # twist_msg.linear.x = float(linear_x)
-        # twist_msg.linear.y = float(linear_y)
-        # twist_msg.linear.z = 0.0
-        # twist_msg.angular.x = 0.0
-        # twist_msg.angular.y = 0.0
-        # twist_msg.angular.z = float(angular_z)
-
-        # # 메시지 발행
-        # self.cmd_vel_publishers[robot_id].publish(twist_msg)
-
-    def stop_robot(self, robot_id):
-        """로봇 정지"""
-        self.publish_cmd_vel(robot_id, 0.0, 0.0, 0.0)
 
 
 # ======================================================================
@@ -946,14 +865,14 @@ class MultiRobotPathPlanner:
         self.grid_cols = grid_cols
         self.obstacles: Set[Tuple[int, int]] = set()
         self.robot_paths: Dict[int, List[Tuple[int, int]]] = {}
-        self.robot_goals: Dict[int, Tuple[int, int]] = {}
+        self.robot_goals: Dict[int, Tuple[float, float, float]] = {}
         self.safety_margin = 1  # 로봇 간 안전 거리 (그리드 셀 단위)
 
     def set_obstacles(self, obstacles: Set[Tuple[int, int]]):
         """장애물 위치 설정"""
         self.obstacles = obstacles.copy()
 
-    def set_robot_goal(self, robot_id: int, goal: Tuple[int, int]):
+    def set_robot_goal(self, robot_id: int, goal: Tuple[float, float, float]):
         """로봇 목표 설정"""
         self.robot_goals[robot_id] = goal
 
@@ -1006,6 +925,7 @@ class MultiRobotPathPlanner:
             (1, -1),
             (1, 0),
             (1, 1),
+            (0,0)
         ]
 
         for dr, dc in directions:
@@ -1083,15 +1003,21 @@ class MultiRobotPathPlanner:
         for robot_id, position in robot_positions.items():
             if robot_id in self.robot_goals:
                 goal = self.robot_goals[robot_id]
-                distance = self.euclidean_distance(position, goal)
+                pos = goal[:2]  # 기존 (row, col) 형태
+                distance = self.euclidean_distance(position, pos)
                 robot_priorities.append((distance, robot_id, position))
 
         robot_priorities.sort()  # 거리 순으로 정렬
+
+        # print(robot_priorities)
 
         # 각 로봇에 대해 순차적으로 경로 계획
         for _, robot_id, position in robot_priorities:
             if robot_id in self.robot_goals:
                 goal = self.robot_goals[robot_id]
+                if goal is None:
+                    goal = position
+                goal = goal[:2]
                 path = self.astar_pathfind(position, goal, exclude_robot=robot_id)
                 if path:
                     planned_paths[robot_id] = path
@@ -1132,18 +1058,31 @@ def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> Proc
 class TaskManagerWidget(QWidget):
     """작업 관리 페이지 위젯"""
 
-    def __init__(self, task_manager, camera=None):
+    def __init__(self,
+                #   task_manager,
+                    camera=None):
         super().__init__()
-        self.manager : TaskManager = task_manager
         self.camera : GridCameraWidget = camera
+        self.manager : TaskManager = TaskManager(camera=self.camera)
         self._dispatched = set()
         self.counter = 1
+        self.ib_cnt = 0
+        self.ob_cnt = 0
 
         # 2) 그 다음 훅 등록 (TaskManager에 on_task_assigned가 있어야 함)
         if hasattr(self.manager, "on_task_assigned"):
             self.manager.on_task_assigned = self._plan_route_for_assigned_task
 
         self.init_ui()
+
+        # ✅ QTimer 인스턴스 생성
+        self.update_timer = QTimer(self)
+        
+        # ✅ 타임아웃 시그널을 update_tables() 메서드에 연결
+        self.update_timer.timeout.connect(self.update_tables)
+        
+        # ✅ 타이머를 1000ms (1초) 간격으로 시작
+        self.update_timer.start(1000) # 1초마다 업데이트
 
     def init_ui(self):
         """작업 관리 UI 초기화"""
@@ -1172,6 +1111,7 @@ class TaskManagerWidget(QWidget):
         robot_headers = ["로봇 ID", "타입", "상태", "현재 작업", "현재 위치", "배터리" ]
         self.robot_status_table.setHorizontalHeaderLabels(robot_headers)
         self.robot_status_table.setMaximumHeight(200)
+        self.robot_status_table.setColumnWidth(4, 150)
         layout.addWidget(self.robot_status_table)
 
         # 작업 추가 버튼들
@@ -1233,8 +1173,8 @@ class TaskManagerWidget(QWidget):
             "작업 타입",
             "로봇 타입",
             "할당 로봇",
-            "상태",
-            "위치",
+            "작업 상태",
+            "목표 위치",
         ]
         self.table.setHorizontalHeaderLabels(headers)
         layout.addWidget(self.table)
@@ -1299,63 +1239,65 @@ class TaskManagerWidget(QWidget):
         self.log_area.addItem(f"[{timestamp}] {message}")
         self.log_area.scrollToBottom()
 
-    def add_inbound(self):
-        """입고 작업 추가"""
-        task = create_inbound_task(f"입고_{self.counter}")
-        if task is None:
-            print("입고 실패")
-            return
-        self.manager.add_process_task(task)
-        self.add_log(f"➕ 입고 작업 {task.task_id} 추가됨")
-        self.counter += 1
-        self.update_tables()
+    # def add_inbound(self):
+    #     """입고 작업 추가"""
+    #     task = create_inbound_task(f"입고_{self.counter}")
+    #     if task is None:
+    #         print("입고 실패")
+    #         return
+    #     self.manager.add_process_task(task)
+    #     self.add_log(f"➕ 입고 작업 {task.task_id} 추가됨")
+    #     self.counter += 1
+    #     self.update_tables()
         
-    def create_inbound_task(process_id, target_pos=(0, 0)):
-        """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
-        steps = [
-            Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, target_pos),
-            Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, target_pos),
-            Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, target_pos),
-            Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, target_pos),
-        ]
-        return ProcessTask(process_id, steps)
+    # def create_inbound_task(process_id, target_pos=(0, 0)):
+    #     """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
+    #     steps = [
+    #         Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, target_pos),
+    #         Task(f"{process_id}_2", TaskType.LOAD, RobotType.ARM, target_pos),
+    #         Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, target_pos),
+    #         Task(f"{process_id}_4", TaskType.WAIT_USER, RobotType.MOBILE, target_pos),
+    #     ]
+    #     return ProcessTask(process_id, steps)
 
 
-    def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> ProcessTask:
-        """출고 작업 생성: 물건을 픽업해서 배송하는 작업"""
-        steps = [
-            Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
-            Task(
-                f"{process_id}_2",
-                TaskType.WAIT_USER,
-                RobotType.MOBILE,
-                pick_pos,
-                priority=1,
-            ),
-            Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
-            Task(f"{process_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
-        ]
-        return ProcessTask(process_id, steps)
+    # def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> ProcessTask:
+    #     """출고 작업 생성: 물건을 픽업해서 배송하는 작업"""
+    #     steps = [
+    #         Task(f"{process_id}_1", TaskType.MOVE, RobotType.MOBILE, pick_pos, priority=1),
+    #         Task(
+    #             f"{process_id}_2",
+    #             TaskType.WAIT_USER,
+    #             RobotType.MOBILE,
+    #             pick_pos,
+    #             priority=1,
+    #         ),
+    #         Task(f"{process_id}_3", TaskType.MOVE, RobotType.MOBILE, drop_pos, priority=1),
+    #         Task(f"{process_id}_4", TaskType.UNLOAD, RobotType.ARM, drop_pos, priority=1),
+    #     ]
+    #     return ProcessTask(process_id, steps)
 
-    def test_add_inbound(self):
+    def test_add_inbound(self, ib_id, amount = 4):
+        if ib_id == False:
+            ib_id = self.ib_cnt
+
         """입고 작업 추가"""
         # DB 풀링
         
         # 입고 박스 추가
-        box_num = 3
         batch_size = 4
         
         # 박스 개수를 배치사이즈만큼 프로세스 반복
-        remaining = box_num
+        remaining = amount
         while remaining > 0:
             current_batch = min(batch_size, remaining)
             # 입고 프로세스 생성
-            process_task = create_inbound_task(f"입고_{self.counter}")
+            process_task = create_inbound_task(f"ib_{ib_id}")
             self.manager.add_process_task(process_task)
-            self.add_log(f"➕ 입고 작업 {process_task.task_id} 추가됨")
-            self.counter += 1                
+            self.add_log(f"➕ 입고 작업 ib_{ib_id} 추가됨")
+            self.ib_cnt += 1                
             remaining -= current_batch
-            self.update_tables()
+        self.update_tables()
             
     def test_add_outbound(self):
         """입고 작업 추가"""
@@ -1370,10 +1312,11 @@ class TaskManagerWidget(QWidget):
         while remaining > 0:
             current_batch = min(batch_size, remaining)
             # 입고 프로세스 생성
-            process_task = create_inbound_task(f"출고_{self.counter}")
-            self.manager.add_process_task(process_task)
-            self.add_log(f"📤 출고 작업 {process_task.task_id} 추가됨")
-            self.counter += 1                
+            if create_inbound_task(f"출고_{self.ob_cnt}"):
+                self.ob_cnt = self.ob_cnt + 1
+                self.manager.add_process_task(self.ob_cnt)
+                self.add_log(f"📤 출고 작업 {self.ob_cnt} 추가됨")
+            self.ib_cnt += 1                
             remaining -= current_batch
             self.update_tables()
 
@@ -1533,26 +1476,28 @@ class TaskManagerWidget(QWidget):
                 self.table.item(row, 5).setBackground(Qt.GlobalColor.lightGray)
 
         # 로봇 상태 테이블 업데이트
-        robots = list(self.manager.robots.values())
+        robots = self.camera.robots
+        # print(robots)
         self.robot_status_table.setRowCount(len(robots))
 
-        for row, robot in enumerate(robots):
-            self.robot_status_table.setItem(row, 0, QTableWidgetItem(str(robot.id)))
+        for row, robot in enumerate(robots.values()):
+            # print(f"Row: {row}, Robot ID: {robot.robot_id}")
+            self.robot_status_table.setItem(row, 0, QTableWidgetItem(str(robot.robot_id)))
             self.robot_status_table.setItem(
-                row, 1, QTableWidgetItem(robot.robot_type.value)
+                row, 1, QTableWidgetItem(robot.robot_type)
             )
             self.robot_status_table.setItem(
-                row, 2, QTableWidgetItem(robot.status.value)
+                row, 2, QTableWidgetItem(str(robot.status))
             )
-            current_task = robot.current_task.task_id if robot.current_task else "-"
+            current_task = robot.task.get("task_type") if robot.task.get("task_type") and "task_type" in robot.task else "-"
             self.robot_status_table.setItem(row, 3, QTableWidgetItem(current_task))
             self.robot_status_table.setItem(
-                row, 4, QTableWidgetItem(str(robot.position))
+                row, 4, QTableWidgetItem(f"({robot.current_pose[0]:.2f}, {robot.current_pose[1]:.2f}, {robot.current_pose[2]:.2f})")
             )
+            battery_val = f"{robot.battery:.1f}%"
             self.robot_status_table.setItem(
-                row, 5, QTableWidgetItem(str(92))
+                row, 5, QTableWidgetItem(battery_val)
             )
-
             # 로봇 상태에 따른 색상
             if robot.status == RobotStatus.BUSY:
                 self.robot_status_table.item(row, 2).setBackground(
@@ -1584,15 +1529,20 @@ def get_image_path():
 class GridCameraWidget(QWidget):
     """그리드 카메라 페이지 위젯"""
 
-    def __init__(self):
+    def __init__(self, robots : dict = None):
         super().__init__()
+
+        self.robots = robots
+
 
         # ROS2 초기화 (UI 초기화 전에 수행)
         self.ros_node = None
+        self.ros_sub_node = None
+        self.task_widget : TaskManagerWidget = None
         # === 설정 값 ===
         self.camera_index = 2
-        self.grid_rows = 5
-        self.grid_cols = 10
+        self.grid_rows = 9
+        self.grid_cols = 15
         self.real_width = 2  # 실제 너비 (미터)
         self.real_height = 1  # 실제 높이 (미터)
 
@@ -1611,7 +1561,7 @@ class GridCameraWidget(QWidget):
         self.robot_positions = {}  # 로봇 위치 저장
 
         # === 경로 계획 관련 ===
-        self.path_planner = MultiRobotPathPlanner(self.grid_rows, self.grid_cols)
+        self.path_planner : MultiRobotPathPlanner = MultiRobotPathPlanner(self.grid_rows, self.grid_cols)
         self.robot_goals = {}  # 로봇 목표 위치
         self.robot_paths = {}  # 로봇 경로
         self.setting_goal_for_robot = None  # 목표 설정 모드
@@ -1641,6 +1591,9 @@ class GridCameraWidget(QWidget):
         self.ros_timer.timeout.connect(self.spin_ros)
         self.ros_timer.start(10)  # 10ms마다 ROS2 스핀
 
+    def set_task_widget(self, widget):
+        self.task_widget = widget
+
     def init_ui(self):
         """카메라 UI 초기화"""
         main_layout = QHBoxLayout()
@@ -1652,14 +1605,14 @@ class GridCameraWidget(QWidget):
         grid_settings = QGridLayout()
         grid_settings.addWidget(QLabel("행 수:"), 0, 0)
         self.rows_spinbox = QSpinBox()
-        self.rows_spinbox.setRange(5, 20)
+        self.rows_spinbox.setRange(5, 40)
         self.rows_spinbox.setValue(self.grid_rows)
         self.rows_spinbox.valueChanged.connect(self.update_grid_size)
         grid_settings.addWidget(self.rows_spinbox, 0, 1)
 
         grid_settings.addWidget(QLabel("열 수:"), 1, 0)
         self.cols_spinbox = QSpinBox()
-        self.cols_spinbox.setRange(5, 30)
+        self.cols_spinbox.setRange(5, 50)
         self.cols_spinbox.setValue(self.grid_cols)
         self.cols_spinbox.valueChanged.connect(self.update_grid_size)
         grid_settings.addWidget(self.cols_spinbox, 1, 1)
@@ -1816,7 +1769,7 @@ class GridCameraWidget(QWidget):
         """ROS2 초기화"""
         try:
             rclpy.init()
-            self.ros_node = RobotStatusPublisher()
+            self.ros_node = RobotStatusNode(robots=self.robots)
             if self.ros_status:
                 self.ros_status.setText("ROS2: 연결됨")
             print("✅ ROS2 노드 초기화 완료")
@@ -1948,8 +1901,37 @@ class GridCameraWidget(QWidget):
         # ROS2 토픽으로 발행
         self.publish_robot_positions()
 
+        # # 경로 업데이트
+        # self.plan_robot_paths()
+
         # 웨이포인트 업데이트
         self.update_waypoint_following()
+
+        self.update_robot_info()
+
+    def update_robot_info(self):
+        """
+        로봇의 위치 정보를 기반으로 self.robots 객체의 current_pose를 업데이트합니다.
+        """
+        for robot_id in self.robot_positions.keys():
+            robot_data = self.robot_positions.get(robot_id)
+            if not robot_data: # 로봇 데이터가 없으면 건너뜀
+                continue
+
+            real_coords = robot_data.get("real_coords")
+            yaw = robot_data.get("yaw")
+
+            if not real_coords:
+                continue
+
+            robot = self.robots.get(robot_id)
+            if not robot: # 로봇 객체가 없으면 건너뜀
+                continue
+
+            x, y = real_coords
+            # ✅ 로봇 객체가 존재할 때만 포즈를 업데이트하도록 로직 수정
+            robot.update_pose(x, y, yaw)
+            # print(f"✅ 로봇 {robot_id}의 포즈 업데이트: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
 
     def print_robot_positions(self):
         """콘솔에 로봇 위치 출력"""
@@ -2068,10 +2050,10 @@ class GridCameraWidget(QWidget):
                 color = self.get_robot_color(robot_id)
 
                 # 로봇 테두리 그리기 (두껍게)
-                cv2.polylines(self.current_frame, [corners], True, color, 4)
+                cv2.polylines(self.current_frame, [corners], True, color, 2)
 
                 # 로봇 중심점 그리기 (크게)
-                cv2.circle(self.current_frame, tuple(center), 8, color, -1)
+                cv2.circle(self.current_frame, tuple(center), 4, color, -1)
 
                 # yaw 방향 화살표 그리기
                 if robot_id in self.robot_positions:
@@ -2229,7 +2211,7 @@ class GridCameraWidget(QWidget):
         except:
             return None
 
-    def publish_path_as_waypoints(self, robot_id, path):
+    def publish_path_as_waypoints(self, robot_id, path, final_yaw = 0.0):
         """A* 경로를 순차 웨이포인트로 변환하여 발행"""
         if not self.ros_node or len(path) <= 1:
             print(
@@ -2289,11 +2271,13 @@ class GridCameraWidget(QWidget):
             print(
                 f"웨이포인트{self.robot_current_waypoint_index[robot_id]}: x 좌표 {first_waypoint[0]},y 좌표 {first_waypoint[1]},yaw {target_yaw}"
             )
-
-        # print(type(robot_id), type(first_waypoint[0]), type(first_waypoint[1]), type(target_yaw))
-        self.ros_node.publish_target_pose(
-            robot_id, first_waypoint[0], first_waypoint[1], target_yaw
-        )
+            self.ros_node.publish_target_pose(
+                robot_id, first_waypoint[0], first_waypoint[1], final_yaw
+            )
+        else:
+            self.ros_node.publish_target_pose(
+                robot_id, first_waypoint[0], first_waypoint[1], target_yaw
+            )
         self.robot_target_published[robot_id] = True
 
     def draw_waypoints(self):
@@ -2378,6 +2362,61 @@ class GridCameraWidget(QWidget):
         # print(f"grid_to_real_coords {real_x} {real_y}")
         return (real_x, real_y)
 
+    # def draw_robot_goals(self):
+    #     """로봇 목표 그리기"""
+    #     if len(self.corner_points) < 4:
+    #         return
+
+    #     corners = np.array(self.corner_points[:4], dtype=np.float32)
+
+    #     for robot_id, goal_pos in self.robot_goals.items():
+    #         row, col = goal_pos
+    #         color = self.get_robot_color(robot_id)
+
+    #         # 목표 위치 계산
+    #         cell_corners = []
+    #         for r_offset, c_offset in [(0, 0), (0, 1), (1, 1), (1, 0)]:
+    #             cell_row = (row + r_offset) / self.grid_rows
+    #             cell_col = (col + c_offset) / self.grid_cols
+
+    #             top_point = corners[2] + cell_col * (
+    #                 corners[3] - corners[2]
+    #             )  # 좌상, 우상
+    #             bottom_point = corners[0] + cell_col * (
+    #                 corners[1] - corners[0]
+    #             )  # 좌하, 우하
+    #             cell_point = top_point + cell_row * (bottom_point - top_point)
+    #             cell_corners.append(cell_point.astype(int))
+
+    #         # 목표를 다이아몬드 모양으로 그리기
+    #         pts = np.array(cell_corners)
+    #         center = np.mean(pts, axis=0).astype(int)
+
+    #         # 다이아몬드 모양 그리기
+    #         diamond_size = 15
+    #         diamond_pts = np.array(
+    #             [
+    #                 [center[0], center[1] - diamond_size],  # 위
+    #                 [center[0] + diamond_size, center[1]],  # 오른쪽
+    #                 [center[0], center[1] + diamond_size],  # 아래
+    #                 [center[0] - diamond_size, center[1]],  # 왼쪽
+    #             ]
+    #         )
+
+    #         cv2.fillPoly(self.current_frame, [diamond_pts], color)
+    #         cv2.polylines(self.current_frame, [diamond_pts], True, (255, 255, 255), 2)
+
+    #         # 로봇 ID 표시
+    #         cv2.putText(
+    #             self.current_frame,
+    #             f"G{robot_id}",
+    #             (center[0] - 10, center[1] + 5),
+    #             cv2.FONT_HERSHEY_SIMPLEX,
+    #             0.6,
+    #             (255, 255, 255),
+    #             2,
+    #         )
+
     def draw_robot_goals(self):
         """로봇 목표 그리기"""
         if len(self.corner_points) < 4:
@@ -2385,8 +2424,11 @@ class GridCameraWidget(QWidget):
 
         corners = np.array(self.corner_points[:4], dtype=np.float32)
 
-        for robot_id, goal_pos in self.robot_goals.items():
-            row, col = goal_pos
+        # ✅ 목표 정보를 (위치, 방향) 튜플로 받도록 수정
+        for robot_id, goal in self.robot_goals.items():
+            # goal에서 위치와 방향을 분리하여 사용
+            row, col, yaw = goal
+
             color = self.get_robot_color(robot_id)
 
             # 목표 위치 계산
@@ -2421,6 +2463,14 @@ class GridCameraWidget(QWidget):
 
             cv2.fillPoly(self.current_frame, [diamond_pts], color)
             cv2.polylines(self.current_frame, [diamond_pts], True, (255, 255, 255), 2)
+            
+            # ✅ 최종 포즈(방향)를 나타내는 선 그리기
+            if yaw is not None:
+                # 방향 벡터의 끝점 계산
+                line_length = 20
+                end_x = int(center[0] + line_length * math.cos(yaw))
+                end_y = int(center[1] + line_length * math.sin(yaw))
+                cv2.line(self.current_frame, tuple(center), (end_x, end_y), (255, 255, 255), 2)
 
             # 로봇 ID 표시
             cv2.putText(
@@ -2591,21 +2641,75 @@ class GridCameraWidget(QWidget):
 
         self.image_label.setPixmap(scaled_pixmap)
 
-    def set_robot_goal(self, pos):
-        """로봇 목표 설정"""
-        if len(self.corner_points) < 4 or self.setting_goal_for_robot is None:
+    # def set_robot_goal(self, pos, robot_id = None, real_pos = None):
+    #     """로봇 목표 설정"""
+    #     if len(self.corner_points) < 4 or (self.setting_goal_for_robot is None and robot_id is None):
+    #         return
+        
+    #     # 마우스 클릭을 통해 이미지 pos 받을때
+    #     if real_pos is None:
+    #         grid_pos = self.pos_to_grid(pos)
+    #     # Task 할당 시 실제 위치 설정
+    #     else:
+    #         grid_pos = self.real_coords_to_grid(real_x = real_pos[0], real_y = real_pos[1])
+
+    #     if grid_pos is None:
+    #         return
+
+    #     row, col = grid_pos
+    #     if robot_id is None:
+    #         robot_id = self.setting_goal_for_robot
+
+    #     # 목표 설정
+    #     self.robot_goals[robot_id] = (row, col)
+    #     self.path_planner.set_robot_goal(robot_id, (row, col))
+
+    #     # UI 업데이트
+    #     self.setting_goal_for_robot = None
+    #     self.set_goal_button.setText("목표 설정")
+
+    #     real_coords = self.grid_to_real_coords(row, col)
+    #     if real_coords:
+    #         real_x, real_y = real_coords
+    #         print(
+    #             f"🎯 로봇{robot_id} 목표 설정: 그리드({row},{col}) 실제({real_x:.2f},{real_y:.2f})"
+    #         )
+    #     return True
+
+    def set_robot_goal(self, pos, robot_id=None, real_pos=None, final_yaw=None):
+        """
+        로봇 목표 설정. 최종 포즈(위치와 방향)를 함께 저장합니다.
+
+        Args:
+            pos (tuple): 마우스 클릭으로 받은 이미지 좌표.
+            robot_id (int): 목표를 설정할 로봇의 ID.
+            real_pos (tuple): 실제 좌표 (x, y).
+            final_yaw (float): 로봇의 최종 방향 (라디안).
+        """
+        if len(self.corner_points) < 4 or (self.setting_goal_for_robot is None and robot_id is None):
             return
 
-        grid_pos = self.pos_to_grid(pos)
+        # Task 할당 시 실제 위치 설정
+        if pos is None and real_pos is not None:
+            grid_pos = self.real_coords_to_grid(real_x=real_pos[0], real_y=real_pos[1])
+        else:
+        # 마우스 클릭을 통해 이미지 pos 받을때
+            grid_pos = self.pos_to_grid(pos)
+
         if grid_pos is None:
             return
 
         row, col = grid_pos
-        robot_id = self.setting_goal_for_robot
+        if robot_id is None:
+            robot_id = self.setting_goal_for_robot
+            
+        # 마우스 클릭으로 목표 설정 시 final_yaw가 없을 수 있으므로 기본값 0으로 설정
+        if final_yaw is None:
+            final_yaw = 0.0
 
-        # 목표 설정
-        self.robot_goals[robot_id] = (row, col)
-        self.path_planner.set_robot_goal(robot_id, (row, col))
+        # ✅ 목표를 위치와 방향(yaw)을 포함한 튜플로 저장
+        self.robot_goals[robot_id] = (row, col, final_yaw)
+        self.path_planner.set_robot_goal(robot_id, (row, col, final_yaw))
 
         # UI 업데이트
         self.setting_goal_for_robot = None
@@ -2615,8 +2719,9 @@ class GridCameraWidget(QWidget):
         if real_coords:
             real_x, real_y = real_coords
             print(
-                f"🎯 로봇{robot_id} 목표 설정: 그리드({row},{col}) 실제({real_x:.2f},{real_y:.2f})"
+                f"🎯 로봇{robot_id} 목표 설정: 그리드({row},{col}) 실제({real_x:.2f},{real_y:.2f}), 최종 방향({math.degrees(final_yaw):.2f}도)"
             )
+        return True
 
     def handle_mouse_click(self, pos):
         """마우스 클릭 처리"""
@@ -2817,8 +2922,8 @@ class GridCameraWidget(QWidget):
                 f"로봇{self.setting_goal_for_robot} 목표 설정 중..."
             )
 
-    def plan_robot_path(self):
-        print(self.robot_positions)
+    # def plan_robot_path(self):
+    #     print(self.robot_positions)
 
     def plan_robot_paths(self):
         """로봇 경로 계획 실행"""
@@ -2865,6 +2970,22 @@ class GridCameraWidget(QWidget):
         self.setting_goal_for_robot = None
         self.set_goal_button.setText("목표 설정")
         print("🗑️ 모든 경로와 목표가 지워졌습니다.")
+        
+    def clear_robot_path(self, robot_id):
+        """특정 로봇의 경로 및 목표 지우기"""
+        if robot_id in self.robot_paths:
+            del self.robot_paths[robot_id]
+            print(f"🗑️ 로봇 {robot_id}의 경로가 지워졌습니다.")
+        
+        if robot_id in self.robot_goals:
+            del self.robot_goals[robot_id]
+            print(f"🗑️ 로봇 {robot_id}의 목표가 지워졌습니다.")
+
+        # 목표 설정 중인 로봇이 현재 로봇과 동일하다면 상태를 초기화
+        if self.setting_goal_for_robot == robot_id:
+            self.setting_goal_for_robot = None
+            self.set_goal_button.setText("목표 설정")
+        
 
     def clear_obstacles(self):
         """모든 장애물 제거"""
@@ -3016,6 +3137,20 @@ class GridCameraWidget(QWidget):
         self.update_waypoint_list()
         print("🗑️ 모든 웨이포인트가 지워졌습니다.")
 
+    def clear_robot_waypoints(self, robot_id):
+        """특정 로봇의 웨이포인트 지우기"""
+        if robot_id in self.robot_waypoints:
+            del self.robot_waypoints[robot_id]
+            print(f"🗑️ 로봇 {robot_id}의 웨이포인트가 지워졌습니다.")
+        
+        if robot_id in self.robot_current_waypoint_index:
+            del self.robot_current_waypoint_index[robot_id]
+            
+        if robot_id in self.robot_target_published:
+            del self.robot_target_published[robot_id]
+            
+        self.update_waypoint_list()
+
     def update_waypoint_list(self):
         """웨이포인트 리스트 UI 업데이트"""
         self.waypoint_list.clear()
@@ -3030,13 +3165,14 @@ class GridCameraWidget(QWidget):
 
     def update_waypoint_following(self):
         """웨이포인트 팔로잉 업데이트"""
-        for robot_id, waypoints in self.robot_waypoints.items():
+        # ✅ 딕셔너리의 사본(copy)을 순회하도록 수정
+        for robot_id, waypoints in list(self.robot_waypoints.items()):
             if robot_id not in self.robot_positions:
                 continue
 
             current_index = self.robot_current_waypoint_index.get(robot_id, 0)
             if current_index >= len(waypoints):
-                continue  # 모든 웨이포인트 완료
+                continue
 
             # 현재 로봇 위치 (실제 좌표)
             robot_data = self.robot_positions[robot_id]
@@ -3045,39 +3181,60 @@ class GridCameraWidget(QWidget):
                 continue
 
             robot_x, robot_y = real_coords
-            target_x, target_y = waypoints[current_index]
+            # waypoints가 딕셔너리일 경우를 대비하여 수정
+            if isinstance(waypoints, dict) and 'path' in waypoints:
+                target_x, target_y = waypoints['path'][current_index]
+            else:
+                target_x, target_y = waypoints[current_index]
 
             # 목표까지의 거리 계산
             distance = math.sqrt((target_x - robot_x) ** 2 + (target_y - robot_y) ** 2)
-            # print(distance)
 
             if distance <= self.waypoint_tolerance:
-                # print(distance)
                 # 웨이포인트에 도달
                 print(
                     f"✅ 로봇{robot_id} 웨이포인트 {current_index+1} 도달: ({target_x:.2f}, {target_y:.2f})"
                 )
+                
                 self.robot_current_waypoint_index[robot_id] = current_index + 1
-                self.robot_target_published[robot_id] = False  # 다음 목표를 위해 리셋
+                
+                # 다음 목표를 위해 리셋
+                self.robot_target_published[robot_id] = False
 
                 if current_index + 1 >= len(waypoints):
                     print(f"🏁 로봇{robot_id} 모든 웨이포인트 완료!")
-                    # 로봇 정지
+                    # 모든 웨이포인트 완료 시 데이터 삭제
+                    self.clear_robot_waypoints(robot_id)
+                    self.clear_robot_path(robot_id)
+                    
+                    final_yaw = 0.0
+                    if isinstance(waypoints, dict) and 'final_yaw' in waypoints:
+                        final_yaw = waypoints['final_yaw']
+
+                    final_x, final_y = waypoints[current_index]
+                    
                     if self.enable_robot_control and self.ros_node:
+                        print(f"✅ 로봇{robot_id} 최종 위치에서 원하는 포즈(yaw={final_yaw:.2f})로 회전")
+                        self.ros_node.publish_target_pose(robot_id, final_x, final_y, final_yaw)
                         self.ros_node.stop_robot(robot_id)
+                        self.task_widget.complete_task(robot_id)
                 else:
                     # 다음 웨이포인트
-                    next_waypoint = waypoints[current_index + 1]
+                    if isinstance(waypoints, dict) and 'path' in waypoints:
+                        next_waypoint = waypoints['path'][current_index + 1]
+                    else:
+                        next_waypoint = waypoints[current_index + 1]
 
-                    # 다음 yaw 계산: 다음 → 다음다음
                     if current_index + 2 < len(waypoints):
-                        after_next = waypoints[current_index + 2]
+                        if isinstance(waypoints, dict) and 'path' in waypoints:
+                            after_next = waypoints['path'][current_index + 2]
+                        else:
+                            after_next = waypoints[current_index + 2]
                         yaw_next = math.atan2(
                             after_next[1] - next_waypoint[1],
                             after_next[0] - next_waypoint[0],
                         )
                     else:
-                        # 마지막 웨이포인트면 로봇 → 다음 방향
                         yaw_next = math.atan2(
                             next_waypoint[1] - robot_y, next_waypoint[0] - robot_x
                         )
@@ -3095,11 +3252,6 @@ class GridCameraWidget(QWidget):
                 self.draw_waypoints()
 
             else:
-                # # 아직 도달하지 않았으면 현재 웨이포인트로 경로 계획 및 ROS2 발행
-                # if current_index == 0 or not self.robot_paths.get(robot_id):
-                #     self.plan_to_waypoint(robot_id, waypoints[current_index])
-
-                # 현재 웨이포인트를 ROS2로 발행 (한 번만)
                 if (
                     self.enable_robot_control
                     and self.ros_node
@@ -3269,6 +3421,7 @@ class InOutInventoryWidget(QWidget):
         self.inbound_table = QTableWidget(0, 4)  # 입고
         self.outbound_table = QTableWidget(0, 4)  # 출고
         self.inventory_table = QTableWidget(0, 5)  # 재고
+        self.chatbot_widget = RAGChatbot()
 
         self.inbound_table.setHorizontalHeaderLabels(["입고ID", "품목", "수량", "일시"])
         self.outbound_table.setHorizontalHeaderLabels(
@@ -3291,11 +3444,18 @@ class InOutInventoryWidget(QWidget):
         )
         left_splitter.setSizes([300, 300])  # 좌상/좌하 초기 높이 비율
 
-        right_panel = self._wrap_with_label("📦 재고 내역", self.inventory_table)
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        right_splitter.addWidget(
+            self._wrap_with_label("📦 재고 내역", self.outbound_table)
+        )
+        right_splitter.addWidget(
+            self._wrap_with_label("❓ 물류 챗봇", self.chatbot_widget)
+        )
+        right_splitter.setSizes([300, 300])  # 좌상/좌하 초기 높이 비율
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter.addWidget(left_splitter)
-        main_splitter.addWidget(right_panel)
+        main_splitter.addWidget(right_splitter)
         main_splitter.setSizes([700, 500])  # 좌/우 초기 폭 비율
 
         # ── 탭 전체 레이아웃 ────────────────────────────────
@@ -3359,9 +3519,14 @@ class SingleButtonWidget(QWidget):
         self.setLayout(layout)
 
     def tasksimple(self):
-        self.camera.ros_node.publish_task(5, "LOAD", x=0.3, y=0.3, yaw=0)
-        print("publish task topic")
-        print("5, 'LOAD', x=0.3, y=0.3, yaw=0")
+        self.camera.ros_node.publish_task(5, "LOAD", x=0.58, y=0.28, yaw=0)
+        print("robot arm !! publish task topic !!")
+        print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
+
+    def task_unload(self):
+        self.camera.ros_node.publish_task(5, "UNLOAD", x=0.58, y=0.28, yaw=0)
+        print("robot arm !! publish task topic !!")
+        print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
 
 
 # ======================================================================
@@ -3376,20 +3541,36 @@ class IntegratedGridCameraApp(QWidget):
         super().__init__()
         self.setWindowTitle("🤖 통합 로봇 관리 시스템")
         self.setGeometry(100, 100, 1400, 900)
-        self.db = DBManager()
-        self.task_manager = TaskManager()
+        self.db : DBManager = DBManager()
+        # self.task_manager = TaskManager()
+        self.robots = {}
+        for robot_id, tag_id in ROBOT_CONFIG.items():
+            if tag_id == 0:
+                robot_type = "ARM" # 예시로 모든 로봇을 MOBILE로 설정
+            else:
+                robot_type = "MOBILE"
+
+            self.robots[robot_id] = Robot(
+                robot_id=robot_id,
+                tag_id=tag_id,
+                robot_type=robot_type,
+                task={"task_type": "IDLE", "target_pose": (0,0,0)},
+                status="PENDING",
+                joint_angles=[]
+            )
+            print(f"로봇 객체 생성 완료: {self.robots[robot_id]}")
         self.init_ui()
 
-        # # ✅ DB Watcher (QThread)
-        # self.db_thread = QThread(self)
-        # self.db_watcher = DBWatcherWorker(self.db, interval_ms=2000)
-        # self.db_watcher.moveToThread(self.db_thread)
-        # # 스레드 수명/시작 연결
-        # self.db_thread.started.connect(self.db_watcher.start)
-        # self.db_watcher.stopped.connect(self.db_thread.quit)
-        # # 데이터 갱신 시그널 연결
-        # self.db_watcher.inbound_updated.connect(self.on_inbound_updated)
-        # # 스레드 시작
+        # ✅ DB Watcher (QThread)
+        self.db_thread = QThread(self)
+        self.db_watcher = DBWatcherWorker(self.db, interval_ms=2000)
+        self.db_watcher.moveToThread(self.db_thread)
+        # 스레드 수명/시작 연결
+        self.db_thread.started.connect(self.db_watcher.start)
+        self.db_watcher.stopped.connect(self.db_thread.quit)
+        # 데이터 갱신 시그널 연결
+        self.db_watcher.inbound_updated.connect(self.on_inbound_updated)
+        # 스레드 시작
         # self.db_thread.start()
 
         # ROS 워커
@@ -3426,14 +3607,13 @@ class IntegratedGridCameraApp(QWidget):
 
     def on_inbound_updated(self, rows):
         latest = max(rows, key=lambda x: datetime.fromisoformat(x["ib_dttm"]))
-        item_id = latest["item_id"]
-        amount = latest["item_amount"]
         ib_id = latest["ib_id"]
+        amount = latest["ib_amount"]
 
-        proc = self.task_manager.create_inbound_tasks(
-            process_id=ib_id, total_amount=amount, batch_size=2
-        )
-        self.task_manager.add_process_task(proc)  # 리스트 루프/없는 add_task 제거
+        #해당 아이템의 실제 위치 반환
+        print(ib_id)
+        
+        self.task_widget.test_add_inbound(ib_id=ib_id, amount=amount)
 
         # on_inbound_updated에서
         print(f"[Inbound] +{len(rows)} rows, latest ib_id={ib_id}, amount={amount}")
@@ -3445,13 +3625,15 @@ class IntegratedGridCameraApp(QWidget):
         self.tab_widget = QTabWidget()
 
         # 탭 1: 그리드 카메라 페이지
-        self.camera_widget = GridCameraWidget()
+        self.camera_widget = GridCameraWidget(robots=self.robots)
         self.tab_widget.addTab(self.camera_widget, "📹 카메라 및 로봇 제어")
 
         # 탭 2: 작업 관리 페이지
         self.task_widget = TaskManagerWidget(
-            self.task_manager, camera=self.camera_widget
+            # self.task_manager,
+            camera=self.camera_widget
         )
+        self.camera_widget.set_task_widget(self.task_widget)
         self.tab_widget.addTab(self.task_widget, "📋 작업 스케줄 관리")
 
         # 탭 3: 입출고 재고 내역 페이지
@@ -3483,14 +3665,259 @@ class IntegratedGridCameraApp(QWidget):
 
         try:
             self.db_watcher.stop()
-        except Exception:
+        except Exception as e:
             pass
         if self.db_thread.isRunning():
             self.db_thread.quit()
             self.db_thread.wait(1000)
         return super().closeEvent(e)
+# ==============================================================================
+# chatbot
+# ==============================================================================
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
+import google.generativeai as genai
+import pandas as pd
+from database import Base
+import markdown
 
-        event.accept()
+# --- Gemini API 설정 ---
+GOOGLE_API_KEY = "AIzaSyDBuxqZ-GN7TGk3gtZUTdSoETNd1KHBFEY"  # 실제 API 키로 변경하세요
+if not GOOGLE_API_KEY:
+    raise ValueError("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
+
+genai.configure(api_key=GOOGLE_API_KEY)
+MODEL_NAME = "gemini-1.5-flash-latest"
+
+# --- SQLAlchemy 설정 ---
+DATABASE_URL = "mysql+pymysql://eunyoung:password@192.168.0.139:3306/BoltDB"
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+)
+SessionLocal = Session(bind=engine)
+
+# --- 백그라운드 스레드: Gemini API 호출 ---
+class GeminiWorker(QThread):
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, prompt_text):
+        super().__init__()
+        self.prompt_text = prompt_text
+
+    def run(self):
+        try:
+            model = genai.GenerativeModel(MODEL_NAME)
+            response = model.generate_content(self.prompt_text)
+            self.finished.emit(response.text)
+        except Exception as e:
+            self.error.emit(f"Gemini API 호출 중 오류 발생: {e}")
+
+# --- DB 스키마 정보 가져오기 ---
+def get_db_schema_info():
+    # """DB의 모든 테이블 스키마 정보를 문자열로 반환합니다."""
+    # inspector = inspect(engine)
+    # table_names = inspector.get_table_names()
+
+    # schema_info = "## 데이터베이스 테이블 스키마 정보\n\n"
+    # for table_name in table_names:
+    #     schema_info += f"### 테이블: {table_name}\n"
+    #     columns = inspector.get_columns(table_name)
+    #     schema_info += "| 컬럼명 | 데이터 타입 | Nullable |\n"
+    #     schema_info += "|---|---|---|\n"
+    #     for col in columns:
+    #         schema_info += f"| {col['name']} | {col['type']} | {'Yes' if col['nullable'] else 'No'} |\n"
+    #     schema_info += "\n"
+
+    """제공된 상세한 DB 스키마 정보를 문자열로 반환합니다."""
+    schema_info = """
+    ## 데이터베이스 테이블 스키마 정보
+
+    ### 1. Item (상품 설명)
+    * **item_id**: INT, PRIMARY KEY, NOT NULL. 상품 고유번호. April tag 번호와 동일합니다.
+    * **item_name**: VARCHAR(20), NOT NULL. 상품명.
+    * **category**: VARCHAR(20), NOT NULL. 카테고리.
+    * **price**: DECIMAL(10,2), NOT NULL. 단가.
+    * **dimension_x**: DECIMAL(10,2), NOT NULL. 가로 길이.
+    * **dimension_y**: DECIMAL(10,2), NOT NULL. 세로 길이.
+    * **dimension_z**: DECIMAL(10,2), NOT NULL. 높이.
+
+    ### 2. Rack (랙 위치)
+    * **rack**: INT, PRIMARY KEY, NOT NULL. 랙 번호.
+    * **x_start**: DECIMAL(10,2), NOT NULL. 랙의 x축 시작 좌표.
+    * **x_end**: DECIMAL(10,2), NOT NULL. 랙의 x축 끝 좌표.
+    * **y_start**: DECIMAL(10,2), NOT NULL. 랙의 y축 시작 좌표.
+    * **y_end**: DECIMAL(10,2), NOT NULL. 랙의 y축 끝 좌표.
+    * **cell_size**: INT, NOT NULL. 랙의 한 칸의 크기.
+
+    ### 3. Location (적재 위치)
+    * **location_id**: INT, PRIMARY KEY, AUTO_INCREMENT. 위치 고유번호.
+    * **rack**: INT, NOT NULL, FOREIGN KEY. 랙 번호.
+    * **row_num**: INT, NOT NULL. 선반 번호 (행).
+    * **col_num**: INT, NOT NULL. 선반의 가로 위치 (열).
+    * **description**: VARCHAR(100), NULL 허용. 위치에 대한 추가 설명.
+
+    ### 4. Inventory (각 Item의 Location 정보)
+    * **location_id**: INT, PRIMARY KEY, NOT NULL, FOREIGN KEY. 상품이 위치한 칸의 고유번호.
+    * **item_id**: INT, PRIMARY KEY, NOT NULL, FOREIGN KEY. 상품 ID.
+    * **iv_dttm**: DATETIME, NOT NULL. 재고가 쌓인 날짜와 시간.
+    * **중요 규칙**: Inventory 테이블의 각 행은 재고에 있는 **상품 하나**를 의미합니다. 재고 수량은 이 테이블의 행 개수로 계산해야 합니다.
+
+    ### 5. Orders (주문 정보)
+    * **order_id**: INT, PRIMARY KEY, AUTO_INCREMENT. 주문 고유번호.
+    * **customer_id**: INT, NOT NULL. 고객 고유번호.
+    * **order_dttm**: DATETIME, NOT NULL. 주문일자 및 시간.
+    * **order_status**: INT, NOT NULL. 주문 상태 (0: 집품대기, 1: 집품중, 2: 집품완료, 3: 출고대기).
+    * **destination**: VARCHAR(40), NULL 허용. 배송지.
+
+    ### 6. Orders_Item (각 주문별 상품)
+    * **복합키**: (order_id, item_id)가 기본 키입니다.
+    * **order_id**: INT, PRIMARY KEY, NOT NULL, FOREIGN KEY. 주문 ID.
+    * **item_id**: INT, PRIMARY KEY, NOT NULL, FOREIGN KEY. 상품 ID.
+    * **order_amount**: INT, NOT NULL. 주문 수량.
+    * **unit_price**: DECIMAL(10,2), NOT NULL. 주문 당시 단가.
+
+    ### 7. Outbound (출고 관련)
+    * **order_id**: INT, PRIMARY KEY, NOT NULL, FOREIGN KEY. 주문 고유번호.
+    * **ob_id**: INT, PRIMARY KEY, NOT NULL. 출고 바코드 번호 (포장 시 Apriltag 번호).
+    * **ob_dttm**: DATETIME, NOT NULL. 출고일자 및 시간.
+    * **ob_status**: INT, NOT NULL. 출고 상태 (0: 출고전, 1: 출고완료).
+    * **destination**: VARCHAR(40), NULL 허용. 배송지.
+
+    ### 8. Inbound (입고 관련)
+    * **ib_id**: INT, PRIMARY KEY, AUTO_INCREMENT. 입고 ID.
+    * **ib_amount**: INT, NOT NULL. 입고된 박스 수량.
+    * **item_id**: INT, NOT NULL, FOREIGN KEY. 상품 ID.
+    * **item_amount**: INT, NOT NULL. 한 박스에 들어있는 상품 개수.
+    * **ib_dttm**: DATETIME, NOT NULL. 입고일자 및 시간.
+    * **ib_status**: INT, NOT NULL. 입고 진행 상황.
+    """
+    return schema_info
+
+# --- DB에서 실제 데이터 조회 ---
+def get_db_data_for_rag(query_keywords):
+    """
+    모든 테이블의 데이터를 조회하여 문자열로 반환합니다.
+    """
+    related_data_info = ""
+    with engine.connect() as connection:
+        # models.py에 정의된 모든 테이블을 가져옵니다.
+        tables = Base.metadata.tables
+        
+        for table_name, table in tables.items():
+            try:
+                sql_query = text(f"SELECT * FROM {table_name}")
+                result = connection.execute(sql_query)
+                df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                
+                if not df.empty:
+                    related_data_info += f"### 테이블 `{table_name}`의 전체 데이터\n"
+                    related_data_info += df.to_markdown(index=False)
+                    related_data_info += "\n\n"
+            except Exception as e:
+                print(f"Error fetching data from {table_name}: {e}")
+                continue
+                
+    return related_data_info
+
+class RAGChatbot(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+        self.db_schema = get_db_schema_info()
+        self.gemini_worker = None
+
+    def initUI(self):
+        self.setWindowTitle('물류 창고 RAG 챗봇 (Gemini 1.5 Flash)')
+        self.setGeometry(300, 300, 600, 500)
+
+        main_layout = QVBoxLayout()
+
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.chat_display.setStyleSheet("font-size: 14px; padding: 10px; background-color: #f0f0f0;")
+        main_layout.addWidget(self.chat_display)
+
+        self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText('질문을 입력하세요...')
+        self.input_field.returnPressed.connect(self.send_message)
+        self.input_field.setStyleSheet("font-size: 14px; padding: 5px;")
+        main_layout.addWidget(self.input_field)
+
+        self.send_button = QPushButton('전송')
+        self.send_button.clicked.connect(self.send_message)
+        self.send_button.setStyleSheet("font-size: 14px; padding: 5px;")
+        main_layout.addWidget(self.send_button)
+        
+        self.status_label = QLabel("준비 완료")
+        self.status_label.setStyleSheet("font-size: 12px; color: gray;")
+        main_layout.addWidget(self.status_label)
+
+        self.setLayout(main_layout)
+
+    def send_message(self):
+            user_question = self.input_field.text()
+            if not user_question.strip():
+                return
+            
+            self.chat_display.append(f"<p style='color: #007bff;'><b>나:</b> {user_question}</p>")
+            self.input_field.clear()
+            
+            self.input_field.setEnabled(False)
+            self.send_button.setEnabled(False)
+            self.status_label.setText("데이터 조회 및 답변 생성 중...")
+
+            # 1. 오늘 날짜 정보 가져오기
+            today_date = datetime.now().strftime("%Y년 %m월 %d일")
+            
+            # 2. 키워드를 기반으로 DB에서 관련 데이터 조회
+            db_data = get_db_data_for_rag(user_question)
+            
+            # 3. DB 스키마, 현재 날짜, 실제 데이터를 포함한 RAG 프롬프트 구성
+            prompt_template = (
+                "당신은 물류 창고 관리 시스템의 AI 챗봇입니다. "
+                "사용자가 요청하는 데이터가 있을 경우, 아래 제공된 데이터베이스 스키마와 실제 데이터를 바탕으로 답변하세요. "
+                "답변할 때는 친절하고, 명확하며, 상세하게 설명해주세요. "
+                "특히, **아래에 제공된 '현재 날짜' 정보를 참고**하여 '오늘'이나 '어제'와 같은 시간 관련 질문에 답변해주세요."
+                "데이터가 존재하지 않거나 질문에 대한 정보가 부족할 경우, '죄송합니다. 현재 데이터에 요청하신 정보가 없습니다.'와 같이 정중하게 답하고, "
+                "어떤 데이터가 필요한지(예: 특정 날짜의 주문 정보)를 구체적으로 알려주세요. "
+                "답변은 가독성을 높이기 위해 불릿 포인트(`*` 또는 `-`)를 활용하여 정리해주세요.\n\n"
+                
+                f"{self.db_schema}\n\n"
+                f"## 현재 날짜 정보\n"
+                f"현재 날짜는 {today_date}입니다.\n\n"
+                f"## 데이터베이스에서 조회한 실제 데이터\n\n"
+                f"{db_data}"
+                f"사용자 질문: {user_question}\n\n"
+                "답변: "
+            )
+
+            # Gemini API 호출을 위한 스레드 시작
+            self.gemini_worker = GeminiWorker(prompt_template)
+            self.gemini_worker.finished.connect(self.handle_response)
+            self.gemini_worker.error.connect(self.handle_error)
+            self.gemini_worker.start()
+
+    def handle_response(self, response_text):
+        # Gemini의 마크다운 답변을 HTML로 변환
+        html_response = markdown.markdown(response_text)
+        
+        # HTML을 `QTextEdit`에 추가 (append 대신 setHtml을 사용하면 기존 내용을 덮어씁니다)
+        self.chat_display.append(f"<p><b>Gemini:</b> {html_response}</p>")
+        self.reset_ui()
+
+    def handle_error(self, error_message):
+        self.chat_display.append(f"<p style='color: red;'><b>오류:</b> {error_message}</p>")
+        self.reset_ui()
+
+    
+    def reset_ui(self):
+        self.input_field.setEnabled(True)
+        self.send_button.setEnabled(True)
+        self.status_label.setText("준비 완료")
+
 
 
 class ClickableLabel(QLabel):
