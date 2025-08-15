@@ -11,7 +11,7 @@ import math
 import heapq
 from collections import deque
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict, Set
+from typing import List, Tuple, Optional, Dict, Set, Any
 from enum import Enum
 from queue import PriorityQueue
 
@@ -26,30 +26,18 @@ except Exception:  # OpenCV 미설치 환경에서도 코드 로드는 되게
 from pupil_apriltags import Detector
 
 # === PySide6 ===
-from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal, Slot, QPoint
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QAction
+from PySide6.QtCore import (
+    Qt, QObject, QThread, QTimer, Signal, Slot, QPoint, QPointF, QRectF, QSize
+)
+from PySide6.QtGui import (
+    QImage, QPixmap, QPainter, QPen, QAction, QBrush, QColor, QFont, QPolygonF
+)
 from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QSplitter,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGridLayout,
-    QSpinBox,
-    QListWidget,
-    QListWidgetItem,
-    QCheckBox,
-    QGroupBox,
-    QComboBox,
-    QTabWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QStatusBar,
-    QTextEdit,
-    QLineEdit
+    QApplication, QMainWindow, QWidget, QSplitter, QLabel, QPushButton, 
+    QVBoxLayout, QHBoxLayout, QGridLayout, QSpinBox, QListWidget, QListWidgetItem, 
+    QCheckBox, QGroupBox, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem, 
+    QStatusBar, QTextEdit, QLineEdit, QGraphicsScene, QGraphicsView, 
+    QGraphicsRectItem, QGraphicsTextItem, QGraphicsEllipseItem, QGraphicsPolygonItem
 )
 
 # === ROS 2 ===
@@ -69,6 +57,393 @@ ROBOT_CONFIG = {
     4: 0,
     5: 0,
 }
+
+RACK_CONFIG = [
+    {
+        "rack_id": 1,
+        "rows": 2,
+        "cols": 2,
+        "floors": 5,
+        "cell_width_m": 1,
+        "cell_height_m": 2,
+        "margin_m": 1.5,
+        "x_m": 1.0,
+        "y_m": 0.3,
+        "initial_occupied": [
+        ]
+    },
+    {
+        "rack_id": 2,
+        "rows": 2,
+        "cols": 2,
+        "floors": 3,
+        "cell_width_m": 0.6,
+        "cell_height_m": 0.5,
+        "margin_m": 0.3,
+        "x_m": 5.0,
+        "y_m": 0.5,
+        "initial_occupied": [
+        ]
+    }
+]
+
+class MyRack:
+    def __init__(self, rack_id: int, rows: int, cols: int, floors: int, cell_width_m: float, cell_height_m: float, margin_m: float, x_m: float, y_m: float):
+        self.rack_id = rack_id
+        self.rows = rows
+        self.cols = cols
+        self.floors = floors
+        self.cell_width_m = cell_width_m
+        self.cell_height_m = cell_height_m
+        self.margin_m = margin_m
+        self.x_m = x_m
+        self.y_m = y_m
+        self.locations: List[List[List[bool]]] = [
+            [[False for _ in range(cols)] for _ in range(rows)] for _ in range(floors)
+        ]
+
+class RackManager:
+    def __init__(self):
+        self.racks: Dict[int, MyRack] = {}
+
+    def add_rack(self, rack_obj: MyRack):
+        self.racks[rack_obj.rack_id] = rack_obj
+
+    def get_rack(self, rack_id: int) -> MyRack | None:
+        return self.racks.get(rack_id)
+
+    def get_all_racks(self) -> Dict[int, MyRack]:
+        return self.racks
+    
+    def is_location_available(self, rack_id: int, floor: int, row: int, col: int) -> bool:
+        rack = self.racks.get(rack_id)
+        if rack and floor < rack.floors and row < rack.rows and col < rack.cols:
+            return not rack.locations[floor][row][col]
+        return False
+
+    def find_first_available_space(self) -> Optional[Tuple[int, int, int, int]]:
+        sorted_racks = sorted(self.get_all_racks().values(), key=lambda r: r.rack_id)
+        
+        for rack in sorted_racks:
+            for floor in range(rack.floors):
+                for row in range(rack.rows):
+                    for col in range(rack.cols):
+                        if self.is_location_available(rack.rack_id, floor, row, col):
+                            return (rack.rack_id, floor, row, col)
+        
+        return None
+
+class StockVisualizerWidget(QWidget):
+    def __init__(self, rack_manager: RackManager):
+        super().__init__()
+        self.rack_manager = rack_manager
+        
+        self.SCALE_FACTOR = 50# 1미터 = 50픽셀
+        self.ROBOT_CLEARANCE_M = 0.4
+        self.ROBOT_CLEARANCE_PX = self.ROBOT_CLEARANCE_M * self.SCALE_FACTOR
+        self.ROBOT_RADIUS_PX = 15
+        
+        self.current_floor = 0
+        self.highlight_pose: Optional[Tuple[int, int, int, int]] = None
+        self.robot_physical_pose_px: Optional[QPointF] = None
+        self.robot_physical_pose_m: Optional[QPointF] = None
+        self.robot_direction: Optional[str] = None
+        
+        main_layout = QVBoxLayout(self)
+        
+        control_layout = QHBoxLayout()
+        self.floor_selector = QComboBox(self)
+        self.floor_selector.currentIndexChanged.connect(self.update_visualization)
+        self.floor_selector.setMinimumWidth(100)
+        
+        self.find_space_button = QPushButton("가용 공간 찾기")
+        self.find_space_button.clicked.connect(self.find_and_display_pose)
+
+        self.pose_label = QLabel("로봇 위치 (Pose): -")
+        self.pose_label.setMinimumWidth(300)
+
+        control_layout.addWidget(QLabel("층 선택:"))
+        control_layout.addWidget(self.floor_selector)
+        control_layout.addWidget(self.find_space_button)
+        control_layout.addStretch(1)
+        control_layout.addWidget(self.pose_label)
+        
+        main_layout.addLayout(control_layout)
+        
+        self.scene = QGraphicsScene(self)
+        self.view = QGraphicsView(self.scene, self)
+        main_layout.addWidget(self.view)
+        
+        self.populate_floor_selector()
+        self.update_visualization()
+
+    def populate_floor_selector(self):
+        max_floors = 0
+        for rack in self.rack_manager.get_all_racks().values():
+            if rack.floors > max_floors:
+                max_floors = rack.floors
+                
+        for f in range(max_floors):
+            self.floor_selector.addItem(f"지상 {f + 1}층")
+    
+    def find_and_display_pose(self):
+        self.highlight_pose = self.rack_manager.find_first_available_space()
+        
+        if self.highlight_pose:
+            rack_id, floor, row, col = self.highlight_pose
+            
+            found_rack_obj = self.rack_manager.get_rack(rack_id)
+            if not found_rack_obj:
+                self.pose_label.setText("로봇 위치 (Pose): 랙을 찾을 수 없습니다.")
+                return
+
+            self.robot_physical_pose_px, self.robot_direction = self.find_safe_border_pose(
+                rack_id, row, col
+            )
+            
+            z_pos = floor + 1
+            
+            if self.robot_physical_pose_px:
+                self.robot_physical_pose_m = QPointF(
+                    self.robot_physical_pose_px.x() / self.SCALE_FACTOR,
+                    self.robot_physical_pose_px.y() / self.SCALE_FACTOR
+                )
+                self.pose_label.setText(
+                    f"로봇 위치(Pose): 랙 {rack_id} / 층 {z_pos} / ({row}, {col})\n"
+                    f"바라보는 방향: {self.robot_direction}\n"
+                    f"물리적 위치: (X={self.robot_physical_pose_m.x():.2f}m, Y={self.robot_physical_pose_m.y():.2f}m)"
+                    f" (픽셀: X={self.robot_physical_pose_px.x():.1f}, Y={self.robot_physical_pose_px.y():.1f})"
+                )
+            else:
+                 self.pose_label.setText("로봇 위치 (Pose): 안전한 위치를 찾을 수 없습니다.")
+
+            found_rack_obj.locations[floor][row][col] = True
+        else:
+            self.pose_label.setText("로봇 위치 (Pose): 가용 가능한 공간이 없습니다.")
+            self.robot_physical_pose_px = None
+            self.robot_physical_pose_m = None
+            self.robot_direction = None
+            
+        self.update_visualization()
+    
+    def find_safe_border_pose(self, target_rack_id: int, row: int, col: int) -> Tuple[Optional[QPointF], Optional[str]]:
+        """
+        주어진 칸의 경계선 바깥에 위치하며 다른 랙과 겹치지 않는 안전한 로봇 위치를 찾습니다.
+        우선순위: 오른쪽 > 왼쪽 > 아래 > 위
+        """
+        found_rack_obj = self.rack_manager.get_rack(target_rack_id)
+        
+        rack_boundaries = []
+        for rack in self.rack_manager.get_all_racks().values():
+            rack_width_px = rack.cols * (rack.cell_width_m * self.SCALE_FACTOR)
+            rack_height_px = rack.rows * (rack.cell_height_m * self.SCALE_FACTOR)
+            
+            rack_rect = QRectF(
+                rack.x_m * self.SCALE_FACTOR,
+                rack.y_m * self.SCALE_FACTOR,
+                rack_width_px,
+                rack_height_px
+            )
+            rack_boundaries.append((rack.rack_id, rack_rect))
+        
+        cell_width_px = found_rack_obj.cell_width_m * self.SCALE_FACTOR
+        cell_height_px = found_rack_obj.cell_height_m * self.SCALE_FACTOR
+        
+        # 랙의 절대 위치(픽셀) 계산
+        rack_x_px = found_rack_obj.x_m * self.SCALE_FACTOR
+        rack_y_px = found_rack_obj.y_m * self.SCALE_FACTOR
+        
+        candidate_poses = []
+        
+        # 오른쪽
+        x_pos = rack_x_px + (col + 1) * cell_width_px + self.ROBOT_CLEARANCE_PX
+        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px + cell_height_px / 2
+        candidate_poses.append((QPointF(x_pos, y_pos), 'right'))
+        
+        # 왼쪽
+        x_pos = rack_x_px + col * cell_width_px - self.ROBOT_CLEARANCE_PX
+        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px + cell_height_px / 2
+        candidate_poses.append((QPointF(x_pos, y_pos), 'left'))
+        
+        # 아래쪽
+        x_pos = rack_x_px + col * cell_width_px + cell_width_px / 2
+        y_pos = rack_y_px + (found_rack_obj.rows - 1 - (row - 1)) * cell_height_px + self.ROBOT_CLEARANCE_PX
+        candidate_poses.append((QPointF(x_pos, y_pos), 'down'))
+
+        # 위쪽
+        x_pos = rack_x_px + col * cell_width_px + cell_width_px / 2
+        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px - self.ROBOT_CLEARANCE_PX
+        candidate_poses.append((QPointF(x_pos, y_pos), 'up'))
+        
+        for pose, direction in candidate_poses:
+            robot_rect = QRectF(pose.x() - self.ROBOT_RADIUS_PX, pose.y() - self.ROBOT_RADIUS_PX, self.ROBOT_RADIUS_PX * 2, self.ROBOT_RADIUS_PX * 2)
+            is_safe = True
+            for _, rack_rect in rack_boundaries:
+                if robot_rect.intersects(rack_rect):
+                    is_safe = False
+                    break
+            if is_safe:
+                return pose, direction
+        
+        # 모든 경계가 다른 랙과 겹치는 경우, 통로 중앙으로 폴백합니다.
+        aisle_width_px_fallback = found_rack_obj.margin_m * self.SCALE_FACTOR
+        x_pos = rack_x_px + found_rack_obj.cols * cell_width_px + aisle_width_px_fallback / 2
+        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px + cell_height_px / 2
+        return QPointF(x_pos, y_pos), 'left'
+
+    def update_visualization(self):
+        self.scene.clear()
+        self.current_floor = self.floor_selector.currentIndex()
+        
+        font = QFont("Arial", 8)
+        
+        for rack in self.rack_manager.get_all_racks().values():
+            if self.current_floor >= rack.floors:
+                continue
+            
+            # 랙의 절대 위치(픽셀)
+            rack_x_px = rack.x_m * self.SCALE_FACTOR
+            rack_y_px = rack.y_m * self.SCALE_FACTOR
+            
+            # 랙의 전체 크기(픽셀)
+            rack_width_px = rack.cols * (rack.cell_width_m * self.SCALE_FACTOR)
+            rack_height_px = rack.rows * (rack.cell_height_m * self.SCALE_FACTOR)
+            
+            cell_width_px = rack.cell_width_m * self.SCALE_FACTOR
+            cell_height_px = rack.cell_height_m * self.SCALE_FACTOR
+            
+            for r in range(rack.rows):
+                for c in range(rack.cols):
+                    grid_x = rack_x_px + c * cell_width_px
+                    grid_y = rack_y_px + (rack.rows - 1 - r) * cell_height_px
+                    
+                    is_occupied = rack.locations[self.current_floor][r][c]
+                    
+                    rect = QGraphicsRectItem(grid_x, grid_y, cell_width_px, cell_height_px)
+                    
+                    if self.highlight_pose and self.highlight_pose == (rack.rack_id, self.current_floor, r, c):
+                        rect.setBrush(QBrush(QColor(0, 150, 0, 100)))
+                        rect.setPen(QPen(QColor(255, 0, 0), 3))
+                    elif is_occupied:
+                        rect.setBrush(QBrush(QColor(0, 150, 0)))
+                        rect.setPen(QPen(Qt.black))
+                    else:
+                        rect.setBrush(QBrush(QColor(200, 255, 200)))
+                        rect.setPen(QPen(Qt.black))
+
+                    self.scene.addItem(rect)
+                    
+                    text = f"랙 {rack.rack_id}\n({r}, {c})"
+                    text_item = QGraphicsTextItem(text)
+                    text_item.setPos(grid_x + cell_width_px / 8, grid_y + cell_height_px / 4)
+                    text_item.setFont(font)
+                    text_item.setDefaultTextColor(QColor(0, 0, 0))
+                    self.scene.addItem(text_item)
+
+        # --- 로봇 시각화 부분 시작 ---
+        if self.robot_physical_pose_px:
+            robot_center = self.robot_physical_pose_px
+            
+            robot = QGraphicsEllipseItem(
+                robot_center.x() - self.ROBOT_RADIUS_PX,
+                robot_center.y() - self.ROBOT_RADIUS_PX,
+                self.ROBOT_RADIUS_PX * 2,
+                self.ROBOT_RADIUS_PX * 2
+            )
+            robot.setBrush(QBrush(QColor(0, 100, 255)))
+            robot.setPen(QPen(Qt.black, 1))
+            self.scene.addItem(robot)
+            
+            arrow_size = 10
+            arrow = QGraphicsPolygonItem()
+            polygon = QPolygonF()
+            
+            if self.robot_direction == 'left':
+                polygon.append(QPointF(robot_center.x() - self.ROBOT_RADIUS_PX, robot_center.y()))
+                polygon.append(QPointF(robot_center.x() - self.ROBOT_RADIUS_PX - arrow_size, robot_center.y() - arrow_size / 2))
+                polygon.append(QPointF(robot_center.x() - self.ROBOT_RADIUS_PX - arrow_size, robot_center.y() + arrow_size / 2))
+            elif self.robot_direction == 'right':
+                polygon.append(QPointF(robot_center.x() + self.ROBOT_RADIUS_PX, robot_center.y()))
+                polygon.append(QPointF(robot_center.x() + self.ROBOT_RADIUS_PX + arrow_size, robot_center.y() - arrow_size / 2))
+                polygon.append(QPointF(robot_center.x() + self.ROBOT_RADIUS_PX + arrow_size, robot_center.y() + arrow_size / 2))
+            elif self.robot_direction == 'up':
+                polygon.append(QPointF(robot_center.x(), robot_center.y() - self.ROBOT_RADIUS_PX))
+                polygon.append(QPointF(robot_center.x() - arrow_size / 2, robot_center.y() - self.ROBOT_RADIUS_PX - arrow_size))
+                polygon.append(QPointF(robot_center.x() + arrow_size / 2, robot_center.y() - self.ROBOT_RADIUS_PX - arrow_size))
+            elif self.robot_direction == 'down':
+                polygon.append(QPointF(robot_center.x(), robot_center.y() + self.ROBOT_RADIUS_PX))
+                polygon.append(QPointF(robot_center.x() - arrow_size / 2, robot_center.y() + self.ROBOT_RADIUS_PX + arrow_size))
+                polygon.append(QPointF(robot_center.x() + arrow_size / 2, robot_center.y() + self.ROBOT_RADIUS_PX + arrow_size))
+            
+            if not polygon.isEmpty():
+                arrow.setPolygon(polygon)
+                arrow.setBrush(QBrush(QColor(255, 0, 0)))
+                arrow.setPen(QPen(Qt.red, 1))
+                self.scene.addItem(arrow)
+        # --- 로봇 시각화 부분 끝 ---
+            
+        self.view.setSceneRect(self.scene.itemsBoundingRect())
+   
+    def set_location_occupied(self, rack_id: int, floor: int, row: int, col: int, occupied: bool):
+        """
+        주어진 랙의 특정 위치의 점유 상태를 변경합니다.
+        """
+        rack = self.rack_manager.get_rack(rack_id)
+        if rack and floor < rack.floors and row < rack.rows and col < rack.cols:
+            rack.locations[floor][row][col] = occupied
+            self.update_visualization()
+
+    def get_robot_target_pose(self) -> Optional[Dict[str, Any]]:
+        """
+        가장 먼저 발견되는 가용 공간을 찾아 로봇의 목표 포즈를 계산하여 반환합니다.
+        반환 값:
+        - 성공 시: {
+            'rack_id': int, 'floor': int, 'row': int, 'col': int,
+            'pose_m': (x_m, y_m, yaw_rad), 'direction': str
+            }
+        - 실패 시: None
+        """
+        highlight_pose = self.rack_manager.find_first_available_space()
+        
+        if not highlight_pose:
+            print("가용 가능한 공간이 없습니다.")
+            return None
+
+        rack_id, floor, row, col = highlight_pose
+        
+        robot_physical_pose_px, robot_direction = self.find_safe_border_pose(
+            rack_id, row, col
+        )
+
+        if not robot_physical_pose_px:
+            print("안전한 로봇 위치를 찾을 수 없습니다.")
+            return None
+
+        # 픽셀을 미터로 변환
+        x_m = round(robot_physical_pose_px.x() / self.SCALE_FACTOR, 2)
+        y_m = round(robot_physical_pose_px.y() / self.SCALE_FACTOR, 2)
+        
+        # 방향을 yaw 각도로 변환
+        yaw_rad = 0.0
+        if robot_direction == 'up':
+            yaw_rad = math.radians(90)
+        elif robot_direction == 'down':
+            yaw_rad = math.radians(-90)
+        elif robot_direction == 'left':
+            yaw_rad = math.radians(180)
+        elif robot_direction == 'right':
+            yaw_rad = math.radians(0)
+
+        self.set_location_occupied(rack_id, floor, row, col, True)
+        
+        return {
+            'rack_id': rack_id,
+            'floor': floor,
+            'row': row,
+            'col': col,
+            'pose_m': (x_m, y_m, yaw_rad),
+            'direction': robot_direction
+        }
 
 # Task 클래스에 가벼운 메타 필드 추가 (기존 코드와 역호환)
 class Task:
@@ -469,7 +844,7 @@ class TaskManager:
             ):
                 robot : Robot = self.robots.get(process.assigned_mobile_robot_id)
                 if robot and robot.is_available():
-                    last_assigned_mobile_robot_id = robot.robot_id
+                    assigned = True
                 else:
                     robot = None
             else:
@@ -538,9 +913,11 @@ class TaskManager:
                             print(f"❌ 로봇 {robot.robot_id}의 경로를 찾을 수 없습니다.")
 
                 elif task.robot_type == "MOBILE" and task.task_type == "MOVE_TO_RACK":
+                    # 랙으로 가는경우 입고와 출고의 경우가 다르기 때문에 다시 정의하기
+                    # 이건 입고일때 랙가는 경우 (빈자리 받아오기)
                     coords : Location = select_location.find_next_robot_coordinates()
                     goal_pos = (coords.x_coord, coords.y_coord)
-                    final_yaw = math.radians(coords.yaw)  # task 객체에 final_yaw가 있다고 가정
+                    final_yaw = math.radians(coords['yaw'])  # task 객체에 final_yaw가 있다고 가정
 
                     task.location = (goal_pos[0], goal_pos[1], final_yaw)
                     robot.assign_task(task)
@@ -562,13 +939,13 @@ class TaskManager:
                 elif task.robot_type == "ARM" and task.task_type == "LOAD":
                     # arm robot id 에 Load task 발행
                     robot.assign_task(task)
-                    self.camera.ros_node.publish_task(robot.robot_id, "LOAD", x=0.6, y=0.28, yaw=0, pinky_id=last_assigned_mobile_robot_id)
+                    self.camera.ros_node.publish_task(robot.robot_id, "LOAD", x=0.6, y=0.28, yaw=0, pinky_id=process.assigned_mobile_robot_id)
                     print("robot arm !! publish task topic !!")
                     print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
 
                 elif task.robot_type == "ARM" and task.task_type == "UNLOAD":
                     robot.assign_task(task)
-                    self.camera.ros_node.publish_task(robot.robot_id, "LOAD", x=0.6, y=0.28, yaw=0, pinky_id=last_assigned_mobile_robot_id)
+                    self.camera.ros_node.publish_task(robot.robot_id, "LOAD", x=0.6, y=0.28, yaw=0, pinky_id=process.assigned_mobile_robot_id)
                     print("robot arm !! publish task topic !!")
                     print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
 
@@ -632,73 +1009,204 @@ class TaskManager:
         return f"✅ Task {task.task_id} completed by Robot {robot_id}"
 
 
-from datetime import datetime
-import requests
+# -*- coding: utf-8 -*-
+"""
+'database.py' 모듈의 세션을 활용하여 로직을 수행하는 DBManager 클래스입니다.
+"""
+from sqlalchemy.orm import Session
+from sqlalchemy import select, desc
+from contextlib import contextmanager
+from typing import List, Dict, Any, TypeVar, Type
 
+# 'database.py'에 정의된 SessionLocal 및 Base를 직접 가져와 사용합니다.
+import database
+# 'models.py'에 정의된 모든 모델들을 불러옵니다.
+from models import Rack, Location, Inventory, Inbound, Outbound, Orders, Orders_Item, Item
+
+# Type hint를 위한 변수
+T = TypeVar('T', bound='DBManager')
 
 class DBManager:
-    def __init__(
-        self, base_url: str = "http://192.168.0.139:8000", default_timeout: float = 2.0
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.session = requests.Session()
-        self.default_timeout = default_timeout
+    """
+    미리 설정된 SQLAlchemy 세션을 사용하여 비즈니스 로직을 수행하는 싱글톤 클래스입니다.
+    """
+    _instance = None
 
-    def _url(self, endpoint: str) -> str:
-        return f"{self.base_url}/{endpoint.lstrip('/')}"
+    def __new__(cls: Type[T], *args, **kwargs) -> T:
+        """
+        클래스 인스턴스가 존재하지 않으면 새로 생성하고, 이미 존재하면 기존 인스턴스를 반환합니다.
+        (싱글톤 패턴)
+        """
+        if cls._instance is None:
+            cls._instance = super(DBManager, cls).__new__(cls)
+        return cls._instance
 
-    def get(
-        self, endpoint: str, params: dict | None = None, timeout: float | None = None
-    ):
+    def __init__(self):
+        """
+        미리 정의된 database 모듈로부터 세션 팩토리와 Base를 가져와 초기화합니다.
+        """
+        if hasattr(self, 'initialized'):
+            return
+        
+        self.SessionLocal = database.SessionLocal
+        self.Base = database.Base
+        self.initialized = True
+
+    @contextmanager
+    def get_session(self):
+        """
+        데이터베이스 세션을 제공하는 컨텍스트 매니저.
+        'with' 문을 사용하여 세션을 안전하게 관리할 수 있습니다.
+        """
+        db = self.SessionLocal()
         try:
-            resp = self.session.get(
-                self._url(endpoint),
-                params=params,
-                timeout=timeout or self.default_timeout,
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            print(f"[DB] GET 실패: {e}")
+            yield db
+        finally:
+            db.close()
+
+    def _get_next_available_location_id(self, db: Session) -> int | None:
+        """
+        Inventory에 등록되지 않은 location_id 중 가장 작은 값을 찾아서 반환합니다.
+        (내부 사용)
+        """
+        subquery = select(Inventory.location_id)
+        result = db.query(Location.location_id)\
+            .filter(Location.location_id.notin_(subquery))\
+            .order_by(Location.location_id.asc())\
+            .first()
+
+        return result[0] if result else None
+
+    def _get_robot_coordinates(self, db: Session, location_id: int) -> dict[str, Any] | None:
+        """
+        주어진 location_id에 대한 로봇의 최종 x, y 좌표를 계산합니다.
+        (내부 사용)
+        """
+        location_data = db.query(Location, Rack)\
+            .join(Rack, Location.rack == Rack.rack)\
+            .filter(Location.location_id == location_id)\
+            .first()
+
+        if not location_data:
+            print(f"오류: Location ID {location_id}에 대한 정보를 찾을 수 없습니다.")
             return None
 
-    def post(
-        self, endpoint: str, data: dict | None = None, timeout: float | None = None
-    ):
-        try:
-            resp = self.session.post(
-                self._url(endpoint), json=data, timeout=timeout or self.default_timeout
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            print(f"[DB] POST 실패: {e}")
-            return None
+        location, rack = location_data
+        y_col_offset = float(location.col_num - 1) * float(rack.cell_size)
+        y_offset = 4
+        y_coord = float(rack.y_start) + y_col_offset + y_offset
 
-    def put(
-        self, endpoint: str, data: dict | None = None, timeout: float | None = None
-    ):
-        try:
-            resp = self.session.put(
-                self._url(endpoint), json=data, timeout=timeout or self.default_timeout
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            print(f"[DB] PUT 실패: {e}")
-            return None
+        x_diff = float(rack.x_start) - float(rack.x_end)
+        x_offset = 16
 
-    def delete(self, endpoint: str, timeout: float | None = None):
-        try:
-            resp = self.session.delete(
-                self._url(endpoint), timeout=timeout or self.default_timeout
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            print(f"[DB] DELETE 실패: {e}")
-            return None
+        if x_diff < 0:
+            x_coord = float(rack.x_start) - x_offset
+            yaw = 180
+        else:
+            x_coord = float(rack.x_start) + x_offset
+            yaw = 0
+            
+        return {
+            "x": x_coord,
+            "y": y_coord,
+            "yaw": yaw,
+            "rack": location.rack,
+            "row_num": location.row_num,
+            "col_num": location.col_num,
+            "location_id": location.location_id
+        }
 
+    def find_next_robot_coordinates(self) -> dict[str, Any] | None:
+        """
+        다음 입고할 위치와 해당 로봇 좌표를 한 번에 계산하여 반환합니다.
+        """
+        with self.get_session() as db:
+            next_location_id = self._get_next_available_location_id(db)
+            if not next_location_id:
+                print("📦 현재 입고 가능한 빈 위치가 없습니다.")
+                return None
+            return self._get_robot_coordinates(db, next_location_id)
+
+    def get_outbound_history(self) -> List[Dict[str, Any]]:
+        """
+        모든 출고 내역과 각 출고에 포함된 상품 목록을 조회합니다.
+        """
+        with self.get_session() as db:
+            try:
+                query = select(
+                    Outbound,
+                    Orders_Item,
+                    Item
+                ).join(
+                    Orders, Outbound.order_relation
+                ).join(
+                    Orders_Item, Orders.order_items
+                ).join(
+                    Item, Orders_Item.item_relation
+                ).order_by(
+                    Outbound.ob_dttm.desc()
+                )
+
+                result_rows = db.execute(query).all()
+
+                outbound_data = {}
+                for outbound_obj, order_item_obj, item_obj in result_rows:
+                    ob_id = outbound_obj.ob_id
+                    
+                    if ob_id not in outbound_data:
+                        outbound_data[ob_id] = {
+                            "ob_id": outbound_obj.ob_id,
+                            "ob_dttm": outbound_obj.ob_dttm.isoformat(),
+                            "ob_status": outbound_obj.ob_status,
+                            "order_id": outbound_obj.order_id,
+                            "items": []
+                        }
+                    
+                    outbound_data[ob_id]["items"].append({
+                        "item_id": item_obj.item_id,
+                        "item_name": item_obj.item_name,
+                        "order_amount": order_item_obj.order_amount,
+                        "unit_price": float(order_item_obj.unit_price)
+                    })
+
+                return list(outbound_data.values())
+
+            except Exception as e:
+                print(f"⛔ 출고 내역 조회 중 오류 발생: {e}")
+                return []
+    
+# ---
+# 사용 예시
+# ---
+if __name__ == "__main__":
+    # DBManager는 싱글톤이므로 객체를 생성할 때 인자를 전달할 필요가 없습니다.
+    # __init__은 첫 호출 시에만 실행됩니다.
+    db_manager = DBManager()
+
+    # 1. 다음 입고 위치 및 로봇 좌표 조회
+    coords = db_manager.find_next_robot_coordinates()
+    if coords:
+        print(f"➡️  Location ID: {coords['location_id']}")
+        print(f"➡️  Rack 번호: {coords['rack']}")
+        print(f"➡️  행/열: {coords['row_num']}행, {coords['col_num']}열")
+        print(f"📍 로봇 좌표: (x={coords['x']}, y={coords['y']}, yaw={coords['yaw']})")
+    print("=" * 50)
+
+    # 2. 전체 출고 내역 조회
+    outbound_list = db_manager.get_outbound_history()
+    if outbound_list:
+        print("✅ 출고 내역 조회 성공:")
+        print("-" * 30)
+        for ob in outbound_list:
+            print(f"📦 출고 ID: {ob['ob_id']} (주문 ID: {ob['order_id']})")
+            print(f"📅 출고 일시: {ob['ob_dttm']}")
+            print(f"📊 출고 상태: {ob['ob_status']}")
+            print("➡️  포함 상품:")
+            for item in ob['items']:
+                print(f"    - 상품명: {item['item_name']} (수량: {item['order_amount']}, 단가: {item['unit_price']})")
+            print("-" * 30)
+    else:
+        print("⚠️ 출고 내역이 없거나 조회에 실패했습니다.")
 
 # ----------------------------------------------------------------------------
 # Workers (ROS / Camera / DB)
@@ -743,21 +1251,34 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from datetime import datetime
 
 
+from sqlalchemy.orm import Session
+from sqlalchemy import select, desc
+from datetime import datetime
+from typing import List, Dict, Any
+
+# 수정된 DBManager 클래스와 Inbound 모델을 import 합니다.
+# 이 파일이 db_manager.py 및 models.py와 같은 디렉토리에 있다고 가정합니다.
+from models import Inbound, Outbound, Orders_Item, Item
+
+# DBManager 인스턴스 생성 (싱글톤이므로 한 번만 생성)
+# DBManager.__init__이 이제 인자를 받지 않으므로 괄호 안에 인자를 넣지 않습니다.
+db_manager = DBManager()
+
 class DBWatcherWorker(QObject):
     inbound_updated = Signal(list)  # 새로 추가된 inbound 레코드 목록을 전달
+    outbound_updated = Signal(list)
     started = Signal()
     stopped = Signal()
 
-    def __init__(self, db: DBManager, interval_ms=2000):
+    def __init__(self, interval_ms=2000):
         super().__init__()
-        self.db = db
+        # 외부에서 DBManager를 직접 주입받는 대신, 전역 인스턴스를 사용합니다.
+        self.db = db_manager 
         self.timer = QTimer(self)
         self.timer.setInterval(interval_ms)
-        self.timer.timeout.connect(self._poll_inbound)
-        self.last_seen_ib_dttm = None  # 마지막으로 본 시각 (ISO string)
-        self.last_seen_ib_id = None  # 또는 마지막 ID (s정수)
-        self.last_seen_ob_dttm = None  # 마지막으로 본 시각 (ISO string)
-        self.last_seen_ob_id = None  # 또는 마지막 ID (정수)
+        self.timer.timeout.connect(self._poll_db)
+        self.last_seen_ib_dttm = None
+        self.last_seen_ob_dttm = None
 
     def start(self):
         self.timer.start()
@@ -766,38 +1287,79 @@ class DBWatcherWorker(QObject):
     def stop(self):
         self.timer.stop()
         self.stopped.emit()
+    
+    def _poll_db(self):
+        """
+        SQLAlchemy를 사용하여 입고(Inbound) 및 출고(Outbound) 테이블의 새로운 레코드를 확인합니다.
+        """
+        self._poll_inbound()
+        self._poll_outbound()
 
     def _poll_inbound(self):
-        rows = self.db.get("/inbounds")
-        if not rows or not isinstance(rows, list):
-            return
-
-        try:
-            latest = max(rows, key=lambda r: datetime.fromisoformat(r["ib_dttm"]))
-        except Exception:
-            return
-
-        if self.last_seen_ib_dttm is None:
-            self.last_seen_ib_dttm = latest["ib_dttm"]
-            self.last_seen_ib_id = latest.get("ib_id")
-            return
-
+        """
+        Inbound 테이블의 새로운 레코드를 확인합니다.
+        """
         new_rows = []
-        try:
-            last_dt = datetime.fromisoformat(self.last_seen_ib_dttm)
-            for r in rows:
-                if datetime.fromisoformat(r["ib_dttm"]) > last_dt:
-                    new_rows.append(r)
-        except Exception:
-            new_rows = []
+        with self.db.get_session() as session:
+            try:
+                # 마지막으로 본 시각 이후의 레코드만 조회
+                query = select(Inbound).order_by(desc(Inbound.ib_dttm))
+                if self.last_seen_ib_dttm:
+                    query = query.where(Inbound.ib_dttm > self.last_seen_ib_dttm)
+                
+                rows = session.execute(query).scalars().all()
 
-        if new_rows:
-            new_rows.sort(key=lambda r: r["ib_dttm"])
-            newest = max(new_rows, key=lambda r: r["ib_dttm"])
-            self.last_seen_ib_dttm = newest["ib_dttm"]
-            self.last_seen_ib_id = newest.get("ib_id")
-            self.inbound_updated.emit(new_rows)
+                if rows:
+                    # SQLAlchemy 객체를 딕셔너리로 변환하여 Signal에 전달
+                    new_rows = [
+                        {
+                            "ib_id": row.ib_id,
+                            "item_id": row.item_id,
+                            "item_amount": row.item_amount,
+                            "ib_amount": row.ib_amount,
+                            "ib_status": row.ib_status,
+                            "ib_dttm": row.ib_dttm.isoformat()
+                        } 
+                        for row in rows
+                    ]
+                    
+                    # 마지막으로 본 시각을 업데이트
+                    self.last_seen_ib_dttm = rows[0].ib_dttm.isoformat()
+                    self.inbound_updated.emit(new_rows)
+            
+            except Exception as e:
+                print(f"⛔ 입고 데이터 조회 중 오류 발생: {e}")
 
+    def _poll_outbound(self):
+        """
+        Outbound 테이블의 새로운 레코드를 확인합니다.
+        """
+        new_rows = []
+        with self.db.get_session() as session:
+            try:
+                query = select(Outbound).order_by(desc(Outbound.ob_dttm))
+                if self.last_seen_ob_dttm:
+                    query = query.where(Outbound.ob_dttm > self.last_seen_ob_dttm)
+                
+                rows = session.execute(query).scalars().all()
+
+                if rows:
+                    new_rows = [
+                        {
+                            "ob_id": row.ob_id,
+                            "order_id": row.order_id,
+                            "ob_status": row.ob_status,
+                            "ob_dttm": row.ob_dttm.isoformat(),
+                            "destination": row.destination
+                        }
+                        for row in rows
+                    ]
+                    
+                    self.last_seen_ob_dttm = rows[0].ob_dttm.isoformat()
+                    self.outbound_updated.emit(new_rows)
+            
+            except Exception as e:
+                print(f"⛔ 출고 데이터 조회 중 오류 발생: {e}")
 
 # ======================================================================
 # 경로 계획 관련 클래스들
@@ -1039,13 +1601,21 @@ class Location:
 # ======================================================================
 # 작업 관리 UI 위젯
 # ======================================================================
+
+
+
 def create_inbound_task(process_id):
     """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
+    coords = select_location.find_next_robot_coordinates() # 로봇이 적재 가능한 공간을 찾는 함수
+    x = round(coords['x']/100, 2)
+    y = round(coords['y']/100, 2)
+    yaw = round(math.radians(coords['yaw']), 2)
+    target_pose = (x, y, yaw)
     steps = [
-        Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", (0.6,0.28)),
-        Task(f"{process_id}_2", "LOAD", "ARM", (0.0,0.0)),    # 안줘도됨, 핑키번호
-        Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", (0.0,0.0)), # 랙 위치
-        Task(f"{process_id}_4", "WAIT_USER", "MOBILE", (0.0,0.0)), # 랙 위치
+        Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", (0.6,0.28, 0.0)),
+        Task(f"{process_id}_2", "LOAD", "ARM", (0.0,0.0, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
+        Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", target_pose), # 랙 위치
+        Task(f"{process_id}_4", "WAIT_USER", "MOBILE", target_pose), # 랙 위치
     ]
     return ProcessTask(process_id, steps)
 
@@ -1065,179 +1635,131 @@ class TaskManagerWidget(QWidget):
     """작업 관리 페이지 위젯"""
 
     def __init__(self,
-                #   task_manager,
+                    # task_manager,
                     camera=None):
         super().__init__()
-        self.camera : GridCameraWidget = camera
-        self.manager : TaskManager = TaskManager(camera=self.camera)
+        self.camera: GridCameraWidget = camera
+        self.manager: TaskManager = TaskManager(camera=self.camera)
         self._dispatched = set()
         self.counter = 1
         self.ib_cnt = 0
         self.ob_cnt = 0
 
-        # 2) 그 다음 훅 등록 (TaskManager에 on_task_assigned가 있어야 함)
-        if hasattr(self.manager, "on_task_assigned"):
-            self.manager.on_task_assigned = self._plan_route_for_assigned_task
+        # 1. 랙 관리자와 시각화 위젯을 먼저 초기화합니다.
+        self.rack_manager : RackManager = RackManager()
+        # RACK_CONFIG 변수를 사용하여 랙 생성
+        for rack_data in RACK_CONFIG:
+            new_rack = MyRack(
+                rack_id=rack_data['rack_id'],
+                rows=rack_data['rows'],
+                cols=rack_data['cols'],
+                floors=rack_data['floors'],
+                cell_width_m=rack_data['cell_width_m'],
+                cell_height_m=rack_data['cell_height_m'],
+                margin_m=rack_data['margin_m'],
+                x_m=rack_data['x_m'],
+                y_m=rack_data['y_m']
+            )
 
+            for floor, row, col in rack_data.get('initial_occupied', []):
+                if floor < new_rack.floors and row < new_rack.rows and col < new_rack.cols:
+                    new_rack.locations[floor][row][col] = True
+            
+            self.rack_manager.add_rack(new_rack)
+        # 2. visualizer_widget을 초기화합니다.
+        self.visualizer_widget = StockVisualizerWidget(self.rack_manager)
+        
+        # 3. 모든 필요한 객체가 준비된 후에 UI를 초기화합니다.
         self.init_ui()
 
-        # ✅ QTimer 인스턴스 생성
+        # 5. 타이머 관련 코드는 그대로 둡니다.
         self.update_timer = QTimer(self)
-        
-        # ✅ 타임아웃 시그널을 update_tables() 메서드에 연결
         self.update_timer.timeout.connect(self.update_tables)
-        
-        # ✅ 타이머를 1000ms (1초) 간격으로 시작
-        self.update_timer.start(1000) # 1초마다 업데이트
+        self.update_timer.start(1000)
+
 
     def init_ui(self):
         """작업 관리 UI 초기화"""
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
 
-        # 제목
-        title = QLabel("🤖 복합 작업 스케줄 관리 시스템")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
-        layout.addWidget(title)
-
-        # 설명
-        description = QLabel(
-            "입고/출고 작업을 생성하고 로봇에 할당하여 관리할 수 있습니다."
-        )
-        description.setAlignment(Qt.AlignCenter)
-        description.setStyleSheet("color: gray; margin-bottom: 20px;")
-        layout.addWidget(description)
-
-        # 로봇 상태 정보
+        # --- 메인 콘텐츠 영역: 시각화 위젯과 테이블을 좌우로 분리 ---
+        content_splitter = QSplitter(Qt.Horizontal)
+        
+        # 2. 로봇 상태 및 작업 현황 테이블 (오른쪽 패널)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        
+        # 로봇 상태 테이블
         robot_status_label = QLabel("🤖 로봇 상태:")
-        layout.addWidget(robot_status_label)
-
+        right_layout.addWidget(robot_status_label)
+        
         self.robot_status_table = QTableWidget()
         self.robot_status_table.setColumnCount(6)
-        robot_headers = ["로봇 ID", "타입", "상태", "현재 작업", "현재 위치", "배터리" ]
+        robot_headers = ["로봇 ID", "타입", "상태", "현재 작업", "현재 위치", "배터리"]
         self.robot_status_table.setHorizontalHeaderLabels(robot_headers)
         self.robot_status_table.setMaximumHeight(200)
-        self.robot_status_table.setColumnWidth(4, 150)
-        layout.addWidget(self.robot_status_table)
+        self.robot_status_table.setColumnWidth(4, 200)
+        right_layout.addWidget(self.robot_status_table)
+        
+        # 전체 작업 현황 테이블
+        table_label = QLabel("📊 전체 작업 현황:")
+        right_layout.addWidget(table_label)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        headers = [
+            "Process ID", "Task ID", "작업 타입", "로봇 타입",
+            "할당 로봇", "작업 상태", "목표 위치",
+        ]
+        self.table.setHorizontalHeaderLabels(headers)
+        right_layout.addWidget(self.table)   
+        content_splitter.addWidget(self.visualizer_widget)
+        content_splitter.addWidget(right_panel)
+        content_splitter.setSizes([200, 800])  # 왼쪽 패널 넓게, 오른쪽 패널 좁게
+        main_layout.addWidget(content_splitter)
 
+        # --- 버튼 및 로그 영역 (하단에 배치) ---
         # 작업 추가 버튼들
-        button_layout = QHBoxLayout()
-
+        button_layout = QVBoxLayout()
         self.btn_add_inbound = QPushButton("📦 입고 작업 추가")
         self.btn_add_inbound.clicked.connect(self.test_add_inbound)
-        self.btn_add_inbound.setStyleSheet(
-            "QPushButton { padding: 10px; font-size: 14px; }"
-        )
+        self.btn_add_inbound.setStyleSheet("QPushButton { padding: 10px; font-size: 14px; }")
         button_layout.addWidget(self.btn_add_inbound)
-
+        
         self.btn_add_outbound = QPushButton("📤 출고 작업 추가")
         self.btn_add_outbound.clicked.connect(self.test_add_outbound)
-        self.btn_add_outbound.setStyleSheet(
-            "QPushButton { padding: 10px; font-size: 14px; }"
-        )
+        self.btn_add_outbound.setStyleSheet("QPushButton { padding: 10px; font-size: 14px; }")
         button_layout.addWidget(self.btn_add_outbound)
-
+        
         self.btn_assign = QPushButton("🚚 작업 할당 실행")
         self.btn_assign.clicked.connect(self.test_assign_tasks_waypoints)
-        self.btn_assign.setStyleSheet(
-            "QPushButton { padding: 10px; font-size: 14px; background-color: #4CAF50; color: white; }"
-        )
+        self.btn_assign.setStyleSheet("QPushButton { padding: 10px; font-size: 14px; background-color: #4CAF50; color: white; }")
         button_layout.addWidget(self.btn_assign)
-
-        layout.addLayout(button_layout)
-
+        main_layout.addLayout(button_layout)
+        
         # 로봇 완료 버튼들
-        robot_layout = QHBoxLayout()
+        robot_layout = QVBoxLayout()
         robot_label = QLabel("로봇 작업 완료:")
         robot_layout.addWidget(robot_label)
-
+        
         for robot_id in self.manager.robots.keys():
             btn = QPushButton(f"✅ 로봇 {robot_id}")
             btn.clicked.connect(lambda checked, rid=robot_id: self.complete_task(rid))
             btn.setStyleSheet("QPushButton { padding: 8px; }")
             robot_layout.addWidget(btn)
-
-        layout.addLayout(robot_layout)
-
+        main_layout.addLayout(robot_layout)
+        
         # 로그 출력 영역
         self.log_label = QLabel("📋 작업 로그:")
-        layout.addWidget(self.log_label)
-
         self.log_area = QListWidget()
-        self.log_area.setMaximumHeight(150)
-        layout.addWidget(self.log_area)
-
-        # 작업 상태 테이블
-        table_label = QLabel("📊 전체 작업 현황:")
-        layout.addWidget(table_label)
-
-        self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        headers = [
-            "Process ID",
-            "Task ID",
-            "작업 타입",
-            "로봇 타입",
-            "할당 로봇",
-            "작업 상태",
-            "목표 위치",
-        ]
-        self.table.setHorizontalHeaderLabels(headers)
-        layout.addWidget(self.table)
-
-
-        self.setLayout(layout)
+        # self.log_area.setMaximumHeight(150)
+        main_layout.addWidget(self.log_label)
+        main_layout.addWidget(self.log_area)
+        
+        self.setLayout(main_layout)
 
         # 초기 테이블 업데이트
         self.update_tables()
-
-    def _plan_route_for_assigned_task(self, task, robot, process):
-        pass
-        # # 모바일 + MOVE + 위치가 있을 때만 경로계획
-        # if getattr(task, "task_type", None) != TaskType.MOVE:
-        #     return
-        # if getattr(task, "robot_type", None) != "MOBILE":
-        #     return
-        # if not getattr(task, "location", None):
-        #     return
-
-        # # 현재 로봇 위치 (카메라 추정 있으면 우선 사용, 없으면 내부 상태)
-        # rid = robot.id
-        # if hasattr(self.camera, "robot_positions") \
-        # and rid in self.camera.robot_positions \
-        # and self.camera.robot_positions[rid].get("real_coords"):
-        #     rx, ry = self.camera.robot_positions[rid]["real_coords"]
-        # else:
-        #     rx, ry = robot.position  # (x,y) 실좌표라고 가정
-
-        # tx, ty = task.location  # 목표 실좌표
-
-        # # 실좌표 -> 그리드셀 변환
-        # def real_to_cell(x, y):
-        #     rows = self.camera.grid_rows
-        #     cols = self.camera.grid_cols
-        #     rw   = self.camera.real_width
-        #     rh   = self.camera.real_height
-        #     c = int(max(0, min(cols-1, x / rw * cols)))
-        #     r = int(max(0, min(rows-1, y / rh * rows)))
-        #     return (r, c)
-
-        # start = real_to_cell(rx, ry)
-        # goal  = real_to_cell(tx, ty)
-
-        # # A* 경로계획 (기존 플래너 재사용)
-        # try:
-        #     path = self.camera.path_planner.astar_pathfind(start, goal, exclude_robot=rid)
-        # except Exception as e:
-        #     print(f"[Planner] A* failed: {e}")
-        #     path = None
-
-        # # 경로를 태스크에 보관(필요 시)
-        # task.planned_path = path
-
-        # # (선택) 화면/로봇에 보여주고 싶다면, 이미 있는 함수로 전달
-        # if path:
-        #     self.camera.publish_path_as_waypoints(rid, path)
 
     def add_log(self, message):
         """로그 메시지 추가"""
@@ -3185,79 +3707,6 @@ class GridCameraWidget(QWidget):
                     )
                     self.robot_target_published[robot_id] = True
 
-    # def update_waypoint_following(self):
-    #     """웨이포인트 팔로잉 업데이트"""
-    #     for robot_id, waypoints in self.robot_waypoints.items():
-    #         if robot_id not in self.robot_positions:
-    #             continue
-
-    #         current_index = self.robot_current_waypoint_index.get(robot_id, 0)
-    #         if current_index >= len(waypoints):
-    #             continue  # 모든 웨이포인트 완료
-
-    #         # 현재 로봇 위치 (실제 좌표)
-    #         robot_data = self.robot_positions[robot_id]
-    #         real_coords = robot_data.get("real_coords")
-    #         if not real_coords:
-    #             continue
-
-    #         robot_x, robot_y = real_coords
-    #         target_x, target_y = waypoints[current_index]
-
-    #         # 목표까지의 거리 계산
-    #         distance = math.sqrt((target_x - robot_x) ** 2 + (target_y - robot_y) ** 2)
-
-    #         if distance <= self.waypoint_tolerance:
-    #             # 웨이포인트에 도달
-    #             print(
-    #                 f"✅ 로봇{robot_id} 웨이포인트 {current_index+1} 도달: ({target_x:.2f}, {target_y:.2f})"
-    #             )
-    #             self.robot_current_waypoint_index[robot_id] = current_index + 1
-    #             self.robot_target_published[robot_id] = False  # 다음 목표를 위해 리셋
-
-    #             if current_index + 1 >= len(waypoints):
-    #                 print(f"🏁 로봇{robot_id} 모든 웨이포인트 완료!")
-    #                 # 로봇 정지
-    #                 if self.enable_robot_control and self.ros_node:
-    #                     self.ros_node.stop_robot(robot_id)
-    #             else:
-    #                 # 다음 웨이포인트로 경로 계획
-    #                 next_waypoint = waypoints[current_index + 1]
-    #                 self.plan_to_waypoint(robot_id, next_waypoint)
-    #                 print(f"웨이포인트{current_index}")
-
-    #                 # 다음 웨이포인트를 ROS2로 발행
-    #                 if self.enable_robot_control and self.ros_node:
-    #                     next_x, next_y = next_waypoint
-    #                     yaw_next = math.atan2(
-    #                         next_y - robot_y, next_x - robot_x
-    #                     )  # 진행방향 yaw
-    #                     print(f"다음 웨이포인트를 발행 {robot_id,next_x,next_y,yaw_next}")
-    #                     self.ros_node.publish_target_pose(
-    #                         robot_id, next_x, next_y, yaw_next
-    #                     )
-    #                     self.robot_target_published[robot_id] = True
-
-    #             self.update_waypoint_list()
-    #         else:
-    #             # 아직 도달하지 않았으면 현재 웨이포인트로 경로 계획 및 ROS2 발행
-    #             if current_index == 0 or not self.robot_paths.get(robot_id):
-    #                 self.plan_to_waypoint(robot_id, waypoints[current_index])
-
-    #             # 현재 웨이포인트를 ROS2로 발행 (한 번만)
-    #             if (
-    #                 self.enable_robot_control
-    #                 and self.ros_node
-    #                 and not self.robot_target_published.get(robot_id, False)
-    #             ):
-    #                 yaw_cur = math.atan2(target_y - robot_y, target_x - robot_x)
-    #                 print(f"현재 웨이포인트를 발행 {robot_id,target_x,target_y,yaw_cur}")
-
-    #                 self.ros_node.publish_target_pose(
-    #                     robot_id, target_x, target_y, yaw_cur
-    #                 )
-    #                 self.robot_target_published[robot_id] = True
-
     def plan_to_waypoint(self, robot_id, target_waypoint):
         """특정 웨이포인트로의 경로 계획"""
         if robot_id not in self.robot_positions:
@@ -3451,7 +3900,6 @@ class SingleButtonWidget(QWidget):
 # 메인 애플리케이션 클래스
 # ======================================================================
 
-
 class IntegratedGridCameraApp(QWidget):
     """통합 그리드 카메라 및 작업 관리 앱"""
 
@@ -3482,7 +3930,7 @@ class IntegratedGridCameraApp(QWidget):
 
         # ✅ DB Watcher (QThread)
         self.db_thread = QThread(self)
-        self.db_watcher = DBWatcherWorker(self.db, interval_ms=2000)
+        self.db_watcher = DBWatcherWorker(interval_ms=2000)
         self.db_watcher.moveToThread(self.db_thread)
         # 스레드 수명/시작 연결
         self.db_thread.started.connect(self.db_watcher.start)
@@ -3490,48 +3938,14 @@ class IntegratedGridCameraApp(QWidget):
         # 데이터 갱신 시그널 연결
         self.db_watcher.inbound_updated.connect(self.on_inbound_updated)
         # 스레드 시작
-        # self.db_thread.start()
-
-        # ROS 워커
-        # self.ros_thread = QThread(self)
-        # self.ros_worker = RosWorker(node)
-        # self.ros_worker.moveToThread(self.ros_thread)
-        # self.ros_thread.started.connect(self.ros_worker.start)
-        # self.ros_worker.heartbeat.connect(self.on_ros_heartbeat)
-        # ros_worker.add_node(node1)
-        # ros_worker.add_node(node2)
-        # self.ros_thread.start()
-
-    # def on_inbound_updated(self, rows):
-
-    #     print(f"[UI] inbound +{len(rows)}")
-    #     latest = max(rows, key=lambda x: datetime.fromisoformat(x["ib_dttm"]))
-    #     item_id = latest["item_id"]
-    #     amount = latest["item_amount"]
-    #     ib_id = latest["ib_id"]
-
-    #     print(f"[입고 감지] 등록: item_id={item_id} amount={amount} ib_id={ib_id}")
-
-    #     # ✅ 입고 작업 생성
-    #     tasks = self.task_manager.create_inbound_tasks(
-    #         item_id, ib_id, amount, batch_size=2
-    #     )
-
-    #     # TaskManager에 등록
-    #     for task in tasks:
-    #         self.task_manager.add_task(task)
-    #         print(f"  → 작업 생성: {task}")
-
-    # IntegratedGridCameraApp.on_inbound_updated 쪽 호출부 정리
+        self.db_thread.start()
 
     def on_inbound_updated(self, rows):
         latest = max(rows, key=lambda x: datetime.fromisoformat(x["ib_dttm"]))
         ib_id = latest["ib_id"]
         amount = latest["ib_amount"]
+        print(latest)
 
-        #해당 아이템의 실제 위치 반환
-        print(ib_id)
-        
         self.task_widget.test_add_inbound(ib_id=ib_id, amount=amount)
 
         # on_inbound_updated에서
@@ -3597,7 +4011,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 import google.generativeai as genai
 import pandas as pd
-from database import Base
+from database import Base, get_db
 import markdown
 
 # --- Gemini API 설정 ---

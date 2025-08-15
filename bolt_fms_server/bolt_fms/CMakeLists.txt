@@ -89,8 +89,8 @@ install(PROGRAMS
   scripts/grid_camera_app.py
   scripts/integrated_grid_camera_app.py
   scripts/database.py
-  scripts/select_location.py
   scripts/models.py
+  scripts/select_location.py
   
   DESTINATION lib/${PROJECT_NAME}
 )

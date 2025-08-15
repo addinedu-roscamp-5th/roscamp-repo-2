@@ -5,8 +5,8 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from database import SessionLocal
-from models import Rack, Location, Inventory
-from typing import Any
+from models import Rack, Location, Inventory, Outbound, Orders, Orders_Item, Item
+from typing import List, Dict, Any
 
 # 1. 비어있는 가장 낮은 번호의 location_id를 찾는 함수
 def _get_next_available_location_id(db: Session) -> int | None:
@@ -96,6 +96,61 @@ def find_next_robot_coordinates() -> dict[str, Any] | None:
     finally:
         db.close()
 
+def get_outbound_history() -> List[Dict[str, Any]]:
+    """
+    모든 출고 내역과 각 출고에 포함된 상품 목록을 조회합니다.
+
+    Returns:
+        출고 내역 목록. 각 항목은 출고 정보와 상품 목록을 포함합니다.
+    """
+    db = SessionLocal()
+    try:
+        # Outbound, Orders, Orders_Item, Item 테이블을 조인하여 데이터 조회
+        # SQLAlchemy ORM의 관계 설정을 활용하여 join 조건을 명시하지 않아도 자동으로 연결됩니다.
+        query = select(
+            Outbound,
+            Orders_Item,
+            Item
+        ).join(
+            Orders, Outbound.order_relation
+        ).join(
+            Orders_Item, Orders.order_items
+        ).join(
+            Item, Orders_Item.item_relation
+        ).order_by(
+            Outbound.ob_dttm.desc()
+        )
+
+        result_rows = db.execute(query).all()
+
+        # 결과를 보기 좋게 그룹화하여 반환
+        outbound_data = {}
+        for outbound_obj, order_item_obj, item_obj in result_rows:
+            ob_id = outbound_obj.ob_id
+            
+            if ob_id not in outbound_data:
+                outbound_data[ob_id] = {
+                    "ob_id": outbound_obj.ob_id,
+                    "ob_dttm": outbound_obj.ob_dttm.isoformat(),
+                    "ob_status": outbound_obj.ob_status,
+                    "order_id": outbound_obj.order_id,
+                    "items": []
+                }
+            
+            outbound_data[ob_id]["items"].append({
+                "item_id": item_obj.item_id,
+                "item_name": item_obj.item_name,
+                "order_amount": order_item_obj.order_amount,
+                "unit_price": float(order_item_obj.unit_price)
+            })
+
+        return list(outbound_data.values())
+
+    except Exception as e:
+        print(f"⛔ 출고 내역 조회 중 오류 발생: {e}")
+        return []
+    finally:
+        db.close()
 
 # 3. 전체 로직 실행 예시
 if __name__ == "__main__":
@@ -106,6 +161,22 @@ if __name__ == "__main__":
         print(f"➡️  행/열: {coords['row_num']}행, {coords['col_num']}열")
         print(f"📍 로봇 좌표: (x={coords['x']}, y={coords['y']}, yaw={coords['yaw']})")
 
-# # Example usage:
-# from select_location import find_next_robot_coordinates
-# coords = find_next_robot_coordinates()
+# ============================================================
+
+    outbound_list = get_outbound_history()
+
+    if outbound_list:
+        print("✅ 출고 내역 조회 성공:")
+        print("-" * 30)
+        for ob in outbound_list:
+            print(f"📦 출고 ID: {ob['ob_id']} (주문 ID: {ob['order_id']})")
+            print(f"📅 출고 일시: {ob['ob_dttm']}")
+            print(f"📊 출고 상태: {ob['ob_status']}")
+            print("➡️  포함 상품:")
+            for item in ob['items']:
+                print(f"    - 상품명: {item['item_name']} (수량: {item['order_amount']}, 단가: {item['unit_price']})")
+            print("-" * 30)
+    else:
+        print("⚠️ 출고 내역이 없거나 조회에 실패했습니다.")
+
+# ============================================================

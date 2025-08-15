@@ -9,7 +9,7 @@ engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,      # 연결 풀에서 자동 재연결
     pool_recycle=3600,       # 연결 재활용 설정(1시간)
-    echo=True               # 로그 필요시 True
+    echo=False               # 로그 필요시 True
 )
 
 # 3. 세션 팩토리 생성
