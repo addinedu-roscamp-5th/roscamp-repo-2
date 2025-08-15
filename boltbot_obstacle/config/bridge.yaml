@@ -1,42 +1,140 @@
-bridges:
-  # Robot 31 (포트 9991)
-  - topic_name: /robot_9991/frame_stop
-    type_name: std_msgs/msg/Bool
-    from_domain: 100
-    to_domain: 31
-  - topic_name: /robot_9991/obstacle/dynamic
-    type_name: std_msgs/msg/Bool
-    from_domain: 100
-    to_domain: 31
-  - topic_name: /robot_9991/obstacle/box_center_x
-    type_name: std_msgs/msg/Float64
-    from_domain: 100
-    to_domain: 31
+name: yolo_prefixed_only
+from_domain: 100
 
-  # Robot 32 (포트 9992)
-  - topic_name: /robot_9992/frame_stop
-    type_name: std_msgs/msg/Bool
-    from_domain: 100
-    to_domain: 32
-  - topic_name: /robot_9992/obstacle/dynamic
-    type_name: std_msgs/msg/Bool
-    from_domain: 100
-    to_domain: 32
-  - topic_name: /robot_9992/obstacle/box_center_x
-    type_name: std_msgs/msg/Float64
-    from_domain: 100
-    to_domain: 32
+topics:
+  # ============ Robot 31 (port 9991) ============
+  /robot_9991/frame_stop:
+    type: std_msgs/msg/Bool
+    to_domain: 31
+    qos:
+      reliability: reliable
+      durability: volatile
+      
+  /robot_9991/bubble_stop:
+    type: std_msgs/msg/Bool
+    to_domain: 31
+    qos:
+      reliability: reliable
+      durability: volatile
 
-  # Robot 33 (포트 9993)
-  - topic_name: /robot_9993/frame_stop
-    type_name: std_msgs/msg/Bool
-    from_domain: 100
+  /robot_9991/obstacle/dynamic:
+    type: std_msgs/msg/Bool
+    to_domain: 31
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9991/drive_state:
+    type: std_msgs/msg/String
+    to_domain: 31
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9991/direction:
+    type: std_msgs/msg/String
+    to_domain: 31
+    qos:
+      reliability: reliable
+      durability: volatile
+
+
+  /robot_9991/scan:
+    type: sensor_msgs/msg/LaserScan
+    from_domain: 31
+    to_domain: 100
+    qos: { reliability: best_effort, durability: volatile }
+
+  
+
+  # ============ Robot 32 (port 9992) ============
+  /robot_9992/frame_stop:
+    type: std_msgs/msg/Bool
+    to_domain: 32
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9992/bubble_stop:
+    type: std_msgs/msg/Bool
+    to_domain: 32
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9992/obstacle/dynamic:
+    type: std_msgs/msg/Bool
+    to_domain: 32
+    qos:
+      reliability: reliable
+      durability: volatile
+
+
+  /robot_9992/drive_state:
+    type: std_msgs/msg/String
+    to_domain: 32
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9992/direction:
+    type: std_msgs/msg/String
+    to_domain: 32
+    qos:
+      reliability: reliable
+      durability: volatile
+
+
+  /robot_9992/scan:
+    type: sensor_msgs/msg/LaserScan
+    from_domain: 32
+    to_domain: 100
+    qos: { reliability: best_effort, durability: volatile }
+
+
+
+  # ============ Robot 33 (port 9993) ============
+  /robot_9993/frame_stop:
+    type: std_msgs/msg/Bool
     to_domain: 33
-  - topic_name: /robot_9993/obstacle/dynamic
-    type_name: std_msgs/msg/Bool
-    from_domain: 100
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9993/bubble_stop:
+    type: std_msgs/msg/Bool
     to_domain: 33
-  - topic_name: /robot_9993/obstacle/box_center_x
-    type_name: std_msgs/msg/Float64
-    from_domain: 100
+    qos:
+      reliability: reliable
+      durability: volatile
+
+
+  /robot_9993/obstacle/dynamic:
+    type: std_msgs/msg/Bool
     to_domain: 33
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9993/drive_state:
+    type: std_msgs/msg/String
+    to_domain: 33
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9993/direction:
+    type: std_msgs/msg/String
+    to_domain: 33
+    qos:
+      reliability: reliable
+      durability: volatile
+
+  /robot_9993/scan:
+    type: sensor_msgs/msg/LaserScan
+    from_domain: 33
+    to_domain: 100
+    qos: { reliability: best_effort, durability: volatile }
+
+
+ 
