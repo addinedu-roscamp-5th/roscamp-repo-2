@@ -63,7 +63,7 @@ RACK_CONFIG = [
         "rack_id": 1,
         "rows": 2,
         "cols": 2,
-        "floors": 5,
+        "floors": 3,
         "cell_width_m": 1,
         "cell_height_m": 2,
         "margin_m": 1.5,
@@ -77,15 +77,45 @@ RACK_CONFIG = [
         "rows": 2,
         "cols": 2,
         "floors": 3,
-        "cell_width_m": 0.6,
-        "cell_height_m": 0.5,
-        "margin_m": 0.3,
-        "x_m": 5.0,
-        "y_m": 0.5,
+        "cell_width_m": 1,
+        "cell_height_m": 2,
+        "margin_m": 1.5,
+        "x_m": 1.0,
+        "y_m": 0.3,
         "initial_occupied": [
         ]
     }
 ]
+
+class MyLocation:
+    """
+    로봇의 목표 포즈 정보를 담는 클래스입니다.
+    """
+    def __init__(self, rack_id: int, floor: int, row: int, col: int, pose_m: Tuple[float, float, float], direction: str):
+        """
+        Location 객체의 생성자입니다.
+        
+        Args:
+            rack_id (int): 랙의 고유 ID
+            floor (int): 랙의 층
+            row (int): 랙의 행
+            col (int): 랙의 열
+            pose_m (Tuple[float, float, float]): 로봇의 물리적 위치 (x, y, yaw) (단위: 미터, 라디안)
+            direction (str): 로봇이 바라보는 방향 ('up', 'down', 'left', 'right')
+        """
+        self.rack_id = rack_id
+        self.floor = floor
+        self.row = row
+        self.col = col
+        self.pose_m = pose_m
+        self.direction = direction
+
+    def __repr__(self) -> str:
+        """
+        객체를 문자열로 표현하여 출력할 때 사용합니다.
+        """
+        return (f"Location(rack_id={self.rack_id}, floor={self.floor}, row={self.row}, col={self.col}, "
+                f"pose_m=({self.pose_m[0]:.2f}m, {self.pose_m[1]:.2f}m, {self.pose_m[2]:.2f}rad), direction='{self.direction}')")
 
 class MyRack:
     def __init__(self, rack_id: int, rows: int, cols: int, floors: int, cell_width_m: float, cell_height_m: float, margin_m: float, x_m: float, y_m: float):
@@ -122,6 +152,9 @@ class RackManager:
         return False
 
     def find_first_available_space(self) -> Optional[Tuple[int, int, int, int]]:
+        """모든 랙을 순회하며 첫 번째 가용 공간을 찾습니다.
+        반환 값: (rack_id, floor, row, col) 형태의 튜플
+        """
         sorted_racks = sorted(self.get_all_racks().values(), key=lambda r: r.rack_id)
         
         for rack in sorted_racks:
@@ -393,14 +426,11 @@ class StockVisualizerWidget(QWidget):
             rack.locations[floor][row][col] = occupied
             self.update_visualization()
 
-    def get_robot_target_pose(self) -> Optional[Dict[str, Any]]:
+    def get_robot_target_pose(self) -> MyLocation:
         """
         가장 먼저 발견되는 가용 공간을 찾아 로봇의 목표 포즈를 계산하여 반환합니다.
         반환 값:
-        - 성공 시: {
-            'rack_id': int, 'floor': int, 'row': int, 'col': int,
-            'pose_m': (x_m, y_m, yaw_rad), 'direction': str
-            }
+        - 성공 시: Location
         - 실패 시: None
         """
         highlight_pose = self.rack_manager.find_first_available_space()
@@ -433,17 +463,12 @@ class StockVisualizerWidget(QWidget):
             yaw_rad = math.radians(180)
         elif robot_direction == 'right':
             yaw_rad = math.radians(0)
+        
+        yaw_rad = round(yaw_rad, 2)
 
         self.set_location_occupied(rack_id, floor, row, col, True)
-        
-        return {
-            'rack_id': rack_id,
-            'floor': floor,
-            'row': row,
-            'col': col,
-            'pose_m': (x_m, y_m, yaw_rad),
-            'direction': robot_direction
-        }
+        location = MyLocation(rack_id=rack_id, floor=floor, row=row, col=col, pose_m=(x_m,y_m,yaw_rad),direction=robot_direction)
+        return location
 
 # Task 클래스에 가벼운 메타 필드 추가 (기존 코드와 역호환)
 class Task:
@@ -467,6 +492,10 @@ class Task:
 
     def __lt__(self, other):
         return self.priority < other.priority
+    
+    def complete_task(self):
+        """작업 완료 처리"""
+        self.status = "COMPLETED"
 
 class Robot:
     """로봇의 상태와 정보를 담는 클래스"""
@@ -508,7 +537,7 @@ class Robot:
 
     def complete_task(self):
         """현재 작업 완료 처리"""
-        self.current_task = Task(-1,task_type="IDLE", robot_type=self.robot_type) 
+        self.current_task.status = "COMPLETED"
 
 # ======================================================================
 # ROS2 통신 관련 클래스들
@@ -544,6 +573,7 @@ class RobotStatusNode(Node):
                 10
             )
             self.get_logger().info(f"Created pose subscriber for {battery_topic}")
+            
             if robot_id in self.robots:
                 if self.robots[robot_id].robot_type == "MOBILE":
                     self.robots[robot_id].status = "PENDING"
@@ -585,7 +615,9 @@ class RobotStatusNode(Node):
         if robot_id in self.robots:
             # ❌ Robot 객체의 battery 속성에 실제 값을 할당
             self.robots[robot_id].status = msg.data
-            self.get_logger().info(f"Robot {robot_id} status updated: {msg.data}")
+            if msg.data == "COMPLETE":
+                self.robots[robot_id].current_task.complete_task()
+                print(f"Robot {robot_id} completed task: {self.robots[robot_id].current_task.status}")
 
     def battery_callback(self, msg, robot_id):
         """로봇의 배터리 메시지를 수신하면 호출되는 콜백 함수"""
@@ -624,7 +656,7 @@ class RobotStatusNode(Node):
         # print(self.pose_publishers[robot_id])
 
     def publish_task(
-        self, robot_id: int, task_type: str, x: float, y: float, yaw: float, pinky_id: int
+        self, robot_id: int, task_type: str, x: float, y: float, yaw: float, pinky_id: int = None
     ):
         msg = TaskSimple()
         msg.task_type = task_type
@@ -766,57 +798,8 @@ class TaskManager:
         self.seen_outbound_ids = set()
         self.on_task_assigned = (
             None
-        )  # type: Optional[Callable[[Task, Robot, Optional[ProcessTask]], None]]
-        
-        self.robot_arm_parking_spots = [
-            (15, 20), # 주차 스팟 1
-            (16, 20), # 주차 스팟 2
-            (17, 20)  # 주차 스팟 3
-        ]
-        self.parking_spot_status = {spot: False for spot in self.robot_arm_parking_spots} # True면 점유됨
-        
-        self.outbound_parking_spots = [
-            (30, 45), # 출고 주차 스팟 1
-            (31, 45), # 출고 주차 스팟 2
-            (32, 45)  # 출고 주차 스팟 3
-        ]
-        self.outbound_parking_status = {spot: False for spot in self.outbound_parking_spots}
-        
-    def assign_inbound_parking_task(self, robot, inbound_task):
-        closest_spot = None
-        min_distance = float('inf')
-
-        # 비어있는 주차 스팟 중에서 가장 가까운 곳을 찾습니다.
-        for spot, occupied in self.parking_spot_status.items():
-            if not occupied:
-                distance = self.calculate_distance(robot.position, spot)
-                if distance < min_distance:
-                    min_distance = distance
-                    closest_spot = spot
-
-        if closest_spot:
-            inbound_task.location = closest_spot
-            self.parking_spot_status[closest_spot] = True # 주차 스팟 점유 상태 업데이트
-            # self.camera.path_planner.plan_path(robot, closest_spot)
-            # ... 이후 작업 할당 및 로봇 이동 로직
-                
-    def assign_outbound_parking_task(self, robot, outbound_task):
-        closest_spot = None
-        min_distance = float('inf')
-
-        # 비어있는 출고 주차 스팟 중에서 가장 가까운 곳을 찾습니다.
-        for spot, occupied in self.outbound_parking_status.items():
-            if not occupied:
-                distance = self.calculate_distance(robot.position, spot)
-                if distance < min_distance:
-                    min_distance = distance
-                    closest_spot = spot
-
-        if closest_spot:
-            outbound_task.location = closest_spot
-            self.outbound_parking_status[closest_spot] = True # 주차 스팟 점유 상태 업데이트
-            # self.path_planner.plan_path(robot, closest_spot)
-            # ... 이후 작업 할당 및 로봇 이동 로직
+        )         
+    
 
     def add_process_task(self, process: ProcessTask):
         self.all_process_tasks.append(process)
@@ -830,12 +813,12 @@ class TaskManager:
         messages = []
         new_queue = PriorityQueue()
 
-        while not self.task_queue.empty():
-            _, _, task = self.task_queue.get()
-            task : Task = task
+        while not self.task_queue.empty(): # 작업큐 가 비어있지 않다면
+            _, _, task = self.task_queue.get() # 작업큐 가져오기
+            task : Task = task  # 해야할 작업
             # print(type(task))
 
-            process = next((c for c in self.all_process_tasks if task in c.steps), None)
+            process = next((c for c in self.all_process_tasks if task in c.steps), None) # 현재 작업이 속한 프로세스 확인
 
             if (
                 process
@@ -853,7 +836,7 @@ class TaskManager:
             if robot:
                 task.status = "ASSIGNED"
                 task.assigned_robot = robot.robot_id
-                robot.status = task.status
+                # robot.status = task.status
                 robot.task_type = task.task_type
 
                 if (
@@ -875,7 +858,7 @@ class TaskManager:
 
                         task.location = (goal_pos[0], goal_pos[1], final_yaw)
 
-                        robot.assign_task(task)
+                        robot.assign_task(task) # 로봇에게 작업 할당
 
                         self.camera.set_robot_goal(
                             pos=None,
@@ -896,7 +879,8 @@ class TaskManager:
                         final_yaw = 0.0  # task 객체에 final_yaw가 있다고 가정
                         
                         task.location = (goal_pos[0], goal_pos[1], final_yaw)
-                        robot.assign_task(task)
+
+                        robot.assign_task(task) # 로봇에게 작업 할당
 
                         self.camera.set_robot_goal(
                             pos=None,
@@ -920,6 +904,7 @@ class TaskManager:
                     final_yaw = math.radians(coords['yaw'])  # task 객체에 final_yaw가 있다고 가정
 
                     task.location = (goal_pos[0], goal_pos[1], final_yaw)
+                    print(task)
                     robot.assign_task(task)
 
                     self.camera.set_robot_goal(
@@ -935,6 +920,15 @@ class TaskManager:
                         print(f"    - 최종 목표: {goal_pos} 위치, {final_yaw} yaw")
                     else:
                         print(f"❌ 로봇 {robot.robot_id}의 경로를 찾을 수 없습니다.")
+
+                elif task.robot_type == "MOBILE" and task.task_type == "WAIT_USER":
+                    # 모바일 로봇이 사용자 대기 작업을 수행하는 경우
+                    robot.assign_task(task)
+
+                    self.camera.ros_node.publish_task(
+                        robot.robot_id, "WAIT_USER", x=robot.current_pose[0], y=robot.current_pose[1], yaw=robot.current_pose[2]
+                    )
+                    print("robot mobile !! 작업자 작업완료 대기중 !!")
 
                 elif task.robot_type == "ARM" and task.task_type == "LOAD":
                     # arm robot id 에 Load task 발행
@@ -991,9 +985,8 @@ class TaskManager:
             return f"ℹ️ Robot {robot_id} has no active task."
 
         task : Task = robot.current_task
-        task.status = "COMPLETED"
-        robot.status = "PENDING"
-        robot.tak = None
+        task.complete_task()
+        # robot.status = "PENDING"
 
         # process task 찾고 다음 단계로 진행
         for comp in self.all_process_tasks:
@@ -1175,39 +1168,6 @@ class DBManager:
                 print(f"⛔ 출고 내역 조회 중 오류 발생: {e}")
                 return []
     
-# ---
-# 사용 예시
-# ---
-if __name__ == "__main__":
-    # DBManager는 싱글톤이므로 객체를 생성할 때 인자를 전달할 필요가 없습니다.
-    # __init__은 첫 호출 시에만 실행됩니다.
-    db_manager = DBManager()
-
-    # 1. 다음 입고 위치 및 로봇 좌표 조회
-    coords = db_manager.find_next_robot_coordinates()
-    if coords:
-        print(f"➡️  Location ID: {coords['location_id']}")
-        print(f"➡️  Rack 번호: {coords['rack']}")
-        print(f"➡️  행/열: {coords['row_num']}행, {coords['col_num']}열")
-        print(f"📍 로봇 좌표: (x={coords['x']}, y={coords['y']}, yaw={coords['yaw']})")
-    print("=" * 50)
-
-    # 2. 전체 출고 내역 조회
-    outbound_list = db_manager.get_outbound_history()
-    if outbound_list:
-        print("✅ 출고 내역 조회 성공:")
-        print("-" * 30)
-        for ob in outbound_list:
-            print(f"📦 출고 ID: {ob['ob_id']} (주문 ID: {ob['order_id']})")
-            print(f"📅 출고 일시: {ob['ob_dttm']}")
-            print(f"📊 출고 상태: {ob['ob_status']}")
-            print("➡️  포함 상품:")
-            for item in ob['items']:
-                print(f"    - 상품명: {item['item_name']} (수량: {item['order_amount']}, 단가: {item['unit_price']})")
-            print("-" * 30)
-    else:
-        print("⚠️ 출고 내역이 없거나 조회에 실패했습니다.")
-
 # ----------------------------------------------------------------------------
 # Workers (ROS / Camera / DB)
 # ----------------------------------------------------------------------------
@@ -1244,7 +1204,6 @@ class RosWorker(QObject):
             self.exec.shutdown()
         except Exception:
             pass
-
 
 # 2) DBWatcher: Qt 타이머로 폴링 + 변경 감지 + 시그널
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -1613,7 +1572,7 @@ def create_inbound_task(process_id):
     target_pose = (x, y, yaw)
     steps = [
         Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", (0.6,0.28, 0.0)),
-        Task(f"{process_id}_2", "LOAD", "ARM", (0.0,0.0, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
+        Task(f"{process_id}_2", "LOAD", "ARM", (0.6,0.28, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
         Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", target_pose), # 랙 위치
         Task(f"{process_id}_4", "WAIT_USER", "MOBILE", target_pose), # 랙 위치
     ]
@@ -1825,7 +1784,6 @@ class TaskManagerWidget(QWidget):
         for line in msg.split("\n"):
             if line.strip():
                 self.add_log(line)
-        # self._plan_and_publish_for_new_assignments()
         self.update_tables()
 
     def assign_tasks(self):
@@ -1849,76 +1807,6 @@ class TaskManagerWidget(QWidget):
         print(f"_real_to_cell {r} {c}")
         return (r, c)
 
-    def _plan_and_publish_for_new_assignments(self):
-        # pass
-        if not self.camera or not self.camera.ros_node:
-            self.add_log("⚠️ 카메라/ROS 미초기화로 발행 생략")
-            return
-
-        for comp in self.manager.all_process_tasks:
-            for t in comp.steps:
-                if (
-                    t.status == TaskStatus.ASSIGNED
-                    and t.robot_type == "MOBILE"
-                    and t.task_type == TaskType.MOVE
-                    and t.task_id not in self._dispatched
-                    and t.assigned_robot
-                ):
-
-                    rid = t.assigned_robot
-                    tx, ty = t.location if t.location else (None, None)
-                    if tx is None or ty is None:
-                        continue
-
-                    # 현재 로봇 위치(카메라 추정 우선, 없으면 TaskManager의 마지막 위치)
-                    if rid in getattr(
-                        self.camera, "robot_positions", {}
-                    ) and self.camera.robot_positions[rid].get("real_coords"):
-                        rx, ry = self.camera.robot_positions[rid]["real_coords"]
-                    else:
-                        rx, ry = self.manager.robots[rid].position
-
-                    start = self._real_to_cell(rx, ry)
-                    goal = self._real_to_cell(tx, ty)
-
-                    yaw = 0.0
-                    path = []
-                    if start and goal:
-                        # ✅ 8방향 A* 경로
-                        path = self.camera.path_planner.astar_pathfind(
-                            start, goal, exclude_robot=rid
-                        )
-
-                    if path and len(path) > 1:
-                        # 경로를 웨이포인트로 저장/시각화하고 첫 점을 즉시 target_pose로 발행
-                        self.camera.publish_path_as_waypoints(rid, path)
-
-                        # 첫 웨이포인트 기준 yaw 계산
-                        first_real = self.camera.grid_to_real_coords(
-                            path[1][0], path[1][1]
-                        )
-                        dx, dy = first_real[0] - rx, first_real[1] - ry
-                        yaw = math.atan2(dy, dx)  # ✅ 라디안 0은 x+ 방향
-                    else:
-                        # 경로가 없으면 바로 목적지로 발행
-                        dx, dy = tx - rx, ty - ry
-                        yaw = math.atan2(dy, dx)
-                        self.camera.ros_node.publish_target_pose(rid, tx, ty, yaw)
-
-                    # ✅ /robot{rid}/task (TaskSimple) 발행
-                    # if hasattr(self.camera.ros_node, "publish_task"):
-                    #     self.camera.ros_node.publish_task(
-                    #         robot_id=rid,
-                    #         task_type=t.task_type.value,
-                    #         x=tx, y=ty, yaw=yaw,
-                    #         task_id=0  # 간단 모드
-                    #     )
-
-                    self._dispatched.add(t.task_id)
-                    self.add_log(
-                        f"🛰️ R{rid}에 목표({tx:.2f},{ty:.2f})·yaw({math.degrees(yaw):.1f}°) 발행"
-                    )
-
     def complete_task(self, robot_id):
         """로봇 작업 완료 처리"""
         msg = self.manager.complete_task(robot_id)
@@ -1935,6 +1823,8 @@ class TaskManagerWidget(QWidget):
         # print(tasks)
 
         self.table.setRowCount(len(tasks))
+        # 로봇 상태 테이블 업데이트
+        robots = self.camera.robots
 
         for row, task in enumerate(tasks):
             task : Task = task
@@ -1946,16 +1836,9 @@ class TaskManagerWidget(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(str(task.task_id)))
             self.table.setItem(row, 2, QTableWidgetItem(task.task_type))
             self.table.setItem(row, 3, QTableWidgetItem(task.robot_type))
-            self.table.setItem(
-                row,
-                4,
-                QTableWidgetItem(
-                    str(task.assigned_robot) if task.assigned_robot else "-"
-                ),
-            )
+            self.table.setItem(row, 4, QTableWidgetItem(str(task.assigned_robot) if task.assigned_robot else "-"))
             self.table.setItem(row, 5, QTableWidgetItem(task.status))
             self.table.setItem(row, 6, QTableWidgetItem(str(task.location)))
-
             # 상태에 따른 색상 설정
             if task.status == "COMPLETED":
                 self.table.item(row, 5).setBackground(Qt.GlobalColor.green)
@@ -1967,8 +1850,6 @@ class TaskManagerWidget(QWidget):
             elif task.status == "PENDING":
                 self.table.item(row, 5).setBackground(Qt.GlobalColor.lightGray)
 
-        # 로봇 상태 테이블 업데이트
-        robots = self.camera.robots
         # print(robots)
         self.robot_status_table.setRowCount(len(robots))
 
@@ -2085,6 +1966,14 @@ class GridCameraWidget(QWidget):
         self.ros_timer = QTimer()
         self.ros_timer.timeout.connect(self.spin_ros)
         self.ros_timer.start(10)  # 10ms마다 ROS2 스핀
+
+    #     # 로봇 작업 완료
+    #     self.robot_check = QTimer()
+    #     self.robot_check.timeout.connect(self.check_robot_complete)
+    #     self.robot_check.start(30)  # 100ms마다 로봇 제어
+
+    # def check_robot_complete(self):
+    #     print(self.robots[2].status)
 
     def set_task_widget(self, widget):
         self.task_widget = widget
@@ -2403,6 +2292,9 @@ class GridCameraWidget(QWidget):
         self.update_waypoint_following()
 
         self.update_robot_info()
+
+
+        
 
     def update_robot_info(self):
         """
@@ -3657,7 +3549,7 @@ class GridCameraWidget(QWidget):
                         print(f"✅ 로봇{robot_id} 최종 위치에서 원하는 포즈(yaw={final_yaw:.2f})로 회전")
                         self.ros_node.publish_target_pose(robot_id, final_x, final_y, final_yaw)
                         self.ros_node.stop_robot(robot_id)
-                        self.task_widget.complete_task(robot_id)
+                        # self.task_widget.complete_task(robot_id)
                 else:
                     # 다음 웨이포인트
                     if isinstance(waypoints, dict) and 'path' in waypoints:
@@ -3891,7 +3783,7 @@ class SingleButtonWidget(QWidget):
         print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
 
     def task_unload(self):
-        self.camera.ros_node.publish_task(5, "UNLOAD", x=0.58, y=0.28, yaw=0)
+        self.camera.ros_node.publish_task(5, "UNLOAD", x=0.58, y=0.58, yaw=0)
         print("robot arm !! publish task topic !!")
         print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
 

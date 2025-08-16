@@ -6,6 +6,39 @@ name: my_bridge
 topics:
 
 # pinky
+
+# task_status topics ----------------------------
+
+  task_status:
+    type: std_msgs/msg/String
+    from_domain: 31
+    to_domain: 0
+    remap: robot1/task_status
+
+  task_status:
+    type: std_msgs/msg/String
+    from_domain: 32
+    to_domain: 0
+    remap: robot2/task_status
+
+  task_status:
+    type: std_msgs/msg/String
+    from_domain: 33
+    to_domain: 0
+    remap: robot3/task_status
+
+  task_status:
+    type: std_msgs/msg/String
+    from_domain: 34
+    to_domain: 0
+    remap: robot2/task_status
+
+  task_status:
+    type: std_msgs/msg/String
+    from_domain: 35
+    to_domain: 0
+    remap: robot3/task_status
+
 # battery topics --------------------------------
   pinky_battery_present:
     type: std_msgs/msg/Float32

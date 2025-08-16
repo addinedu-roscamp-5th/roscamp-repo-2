@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # 1. 데이터베이스 접속 정보
-DATABASE_URL = "mysql+pymysql://eunyoung:password@192.168.0.139:3306/BoltDB"
+DATABASE_URL = "mysql+pymysql://admin:1q2w3e4r!@mydb1.ctmkoowy496q.ap-southeast-2.rds.amazonaws.com:3306/BoltDB"
 
 # 2. SQLAlchemy 엔진 생성
 engine = create_engine(
