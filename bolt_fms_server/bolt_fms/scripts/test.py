@@ -13,6 +13,39 @@ from PySide6.QtGui import QBrush, QPen, QColor, QFont, QPolygonF
 from typing import List, Dict, Tuple, Any, Optional
 import math
 
+from typing import NamedTuple, Tuple
+from typing import Tuple
+
+class Location:
+    """
+    로봇의 목표 포즈 정보를 담는 클래스입니다.
+    """
+    def __init__(self, rack_id: int, floor: int, row: int, col: int, pose_m: Tuple[float, float, float], direction: str):
+        """
+        Location 객체의 생성자입니다.
+        
+        Args:
+            rack_id (int): 랙의 고유 ID
+            floor (int): 랙의 층
+            row (int): 랙의 행
+            col (int): 랙의 열
+            pose_m (Tuple[float, float, float]): 로봇의 물리적 위치 (x, y, yaw) (단위: 미터, 라디안)
+            direction (str): 로봇이 바라보는 방향 ('up', 'down', 'left', 'right')
+        """
+        self.rack_id = rack_id
+        self.floor = floor
+        self.row = row
+        self.col = col
+        self.pose_m = pose_m
+        self.direction = direction
+
+    def __repr__(self) -> str:
+        """
+        객체를 문자열로 표현하여 출력할 때 사용합니다.
+        """
+        return (f"Location(rack_id={self.rack_id}, floor={self.floor}, row={self.row}, col={self.col}, "
+                f"pose_m=({self.pose_m[0]:.2f}m, {self.pose_m[1]:.2f}m, {self.pose_m[2]:.2f}rad), direction='{self.direction}')")
+
 class Rack:
     def __init__(self, rack_id: int, rows: int, cols: int, floors: int, cell_width_m: float, cell_height_m: float, margin_m: float, x_m: float, y_m: float):
         self.rack_id = rack_id
@@ -321,14 +354,11 @@ class StockVisualizerWidget(QWidget):
             rack.locations[floor][row][col] = occupied
             self.update_visualization()
 
-    def get_robot_target_pose(self) -> Optional[Dict[str, Any]]:
+    def get_robot_target_pose(self) -> Location:
         """
         가장 먼저 발견되는 가용 공간을 찾아 로봇의 목표 포즈를 계산하여 반환합니다.
         반환 값:
-        - 성공 시: {
-            'rack_id': int, 'floor': int, 'row': int, 'col': int,
-            'pose_m': (x_m, y_m, yaw_rad), 'direction': str
-            }
+        - 성공 시: Location
         - 실패 시: None
         """
         highlight_pose = self.rack_manager.find_first_available_space()
@@ -363,15 +393,8 @@ class StockVisualizerWidget(QWidget):
             yaw_rad = math.radians(0)
 
         self.set_location_occupied(rack_id, floor, row, col, True)
-        
-        return {
-            'rack_id': rack_id,
-            'floor': floor,
-            'row': row,
-            'col': col,
-            'pose_m': (x_m, y_m, yaw_rad),
-            'direction': robot_direction
-        }
+        location = Location(rack_id=rack_id, floor=floor, row=row, col=col, pose_m=(x_m,y_m,yaw_rad),direction=robot_direction)
+        return location
 
 # racks_config.py 모듈에서 RACK_CONFIG 변수를 임포트
 RACK_CONFIG = [
