@@ -117,6 +117,36 @@ class MyLocation:
         return (f"Location(rack_id={self.rack_id}, floor={self.floor}, row={self.row}, col={self.col}, "
                 f"pose_m=({self.pose_m[0]:.2f}m, {self.pose_m[1]:.2f}m, {self.pose_m[2]:.2f}rad), direction='{self.direction}')")
 
+class MyLocation:
+    """
+    로봇의 목표 포즈 정보를 담는 클래스입니다.
+    """
+    def __init__(self, rack_id: int, floor: int, row: int, col: int, pose_m: Tuple[float, float, float], direction: str):
+        """
+        Location 객체의 생성자입니다.
+        
+        Args:
+            rack_id (int): 랙의 고유 ID
+            floor (int): 랙의 층
+            row (int): 랙의 행
+            col (int): 랙의 열
+            pose_m (Tuple[float, float, float]): 로봇의 물리적 위치 (x, y, yaw) (단위: 미터, 라디안)
+            direction (str): 로봇이 바라보는 방향 ('up', 'down', 'left', 'right')
+        """
+        self.rack_id = rack_id
+        self.floor = floor
+        self.row = row
+        self.col = col
+        self.pose_m = pose_m
+        self.direction = direction
+
+    def __repr__(self) -> str:
+        """
+        객체를 문자열로 표현하여 출력할 때 사용합니다.
+        """
+        return (f"Location(rack_id={self.rack_id}, floor={self.floor}, row={self.row}, col={self.col}, "
+                f"pose_m=({self.pose_m[0]:.2f}m, {self.pose_m[1]:.2f}m, {self.pose_m[2]:.2f}rad), direction='{self.direction}')")
+
 class MyRack:
     def __init__(self, rack_id: int, rows: int, cols: int, floors: int, cell_width_m: float, cell_height_m: float, margin_m: float, x_m: float, y_m: float):
         self.rack_id = rack_id
@@ -152,6 +182,9 @@ class RackManager:
         return False
 
     def find_first_available_space(self) -> Optional[Tuple[int, int, int, int]]:
+        """모든 랙을 순회하며 첫 번째 가용 공간을 찾습니다.
+        반환 값: (rack_id, floor, row, col) 형태의 튜플
+        """
         """모든 랙을 순회하며 첫 번째 가용 공간을 찾습니다.
         반환 값: (rack_id, floor, row, col) 형태의 튜플
         """
@@ -427,9 +460,11 @@ class StockVisualizerWidget(QWidget):
             self.update_visualization()
 
     def get_robot_target_pose(self) -> MyLocation:
+    def get_robot_target_pose(self) -> MyLocation:
         """
         가장 먼저 발견되는 가용 공간을 찾아 로봇의 목표 포즈를 계산하여 반환합니다.
         반환 값:
+        - 성공 시: Location
         - 성공 시: Location
         - 실패 시: None
         """
@@ -465,8 +500,12 @@ class StockVisualizerWidget(QWidget):
             yaw_rad = math.radians(0)
         
         yaw_rad = round(yaw_rad, 2)
+        
+        yaw_rad = round(yaw_rad, 2)
 
         self.set_location_occupied(rack_id, floor, row, col, True)
+        location = MyLocation(rack_id=rack_id, floor=floor, row=row, col=col, pose_m=(x_m,y_m,yaw_rad),direction=robot_direction)
+        return location
         location = MyLocation(rack_id=rack_id, floor=floor, row=row, col=col, pose_m=(x_m,y_m,yaw_rad),direction=robot_direction)
         return location
 
@@ -1593,9 +1632,7 @@ def create_outbound_task(process_id, pick_pos=(4, 4), drop_pos=(10, 10)) -> Proc
 class TaskManagerWidget(QWidget):
     """작업 관리 페이지 위젯"""
 
-    def __init__(self,
-                    # task_manager,
-                    camera=None):
+    def __init__(self, camera=None):
         super().__init__()
         self.camera: GridCameraWidget = camera
         self.manager: TaskManager = TaskManager(camera=self.camera)
@@ -1741,7 +1778,7 @@ class TaskManagerWidget(QWidget):
         while remaining > 0:
             current_batch = min(batch_size, remaining)
             # 입고 프로세스 생성
-            process_task = create_inbound_task(f"ib_{ib_id}")
+            process_task = self.create_inbound_task(f"ib_{ib_id}")
             self.manager.add_process_task(process_task)
             self.add_log(f"➕ 입고 작업 ib_{ib_id} 추가됨")
             self.ib_cnt += 1                
@@ -1761,13 +1798,26 @@ class TaskManagerWidget(QWidget):
         while remaining > 0:
             current_batch = min(batch_size, remaining)
             # 입고 프로세스 생성
-            if create_inbound_task(f"출고_{self.ob_cnt}"):
+            if self.create_inbound_task(f"출고_{self.ob_cnt}"):
                 self.ob_cnt = self.ob_cnt + 1
                 self.manager.add_process_task(self.ob_cnt)
                 self.add_log(f"📤 출고 작업 {self.ob_cnt} 추가됨")
             self.ib_cnt += 1                
             remaining -= current_batch
             self.update_tables()
+            
+    def create_inbound_task(self, process_id):
+        """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
+        location : MyLocation = self.visualizer_widget.get_robot_target_pose()
+        
+        target_pose = location.pose_m
+        steps = [
+            Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", (0.6,0.28, 0.0)),
+            Task(f"{process_id}_2", "LOAD", "ARM", (0.0,0.0, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
+            Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", target_pose), # 랙 위치
+            Task(f"{process_id}_4", "WAIT_USER", "MOBILE", target_pose), # 랙 위치
+        ]
+        return ProcessTask(process_id, steps)
 
     def add_outbound(self):
         """출고 작업 추가"""
@@ -3800,7 +3850,7 @@ class IntegratedGridCameraApp(QWidget):
         self.setWindowTitle("🤖 통합 로봇 관리 시스템")
         self.setGeometry(100, 100, 1400, 900)
         self.db : DBManager = DBManager()
-        # self.task_manager = TaskManager()
+
         self.robots = {}
         for robot_id, tag_id in ROBOT_CONFIG.items():
             if tag_id == 0:
