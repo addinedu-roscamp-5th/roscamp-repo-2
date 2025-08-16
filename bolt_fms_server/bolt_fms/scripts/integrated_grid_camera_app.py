@@ -460,7 +460,6 @@ class StockVisualizerWidget(QWidget):
             self.update_visualization()
 
     def get_robot_target_pose(self) -> MyLocation:
-    def get_robot_target_pose(self) -> MyLocation:
         """
         가장 먼저 발견되는 가용 공간을 찾아 로봇의 목표 포즈를 계산하여 반환합니다.
         반환 값:
