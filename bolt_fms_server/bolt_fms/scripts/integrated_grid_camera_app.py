@@ -932,19 +932,21 @@ class TaskManager:
                     print(task.status)
                     time.sleep(5.0)
                     print("작업자 대기중 ...")
+                    self.complete_task(robot.robot_id)
+                    print("작업자 작업완료")
 
                 elif task.robot_type == "ARM" and task.task_type == "LOAD":
                     # arm robot id 에 Load task 발행
                     # robot.assign_task(task)
                     self.camera.ros_node.publish_task(robot.robot_id, "LOAD", x=0.6, y=0.28, yaw=0, pinky_id=process.assigned_mobile_robot_id)
                     print("robot arm !! publish task topic !!")
-                    print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
+                    print(f"5, 'LOAD', x=0.6, y=0.28, yaw=0")
 
                 elif task.robot_type == "ARM" and task.task_type == "UNLOAD":
                     # robot.assign_task(task)
-                    self.camera.ros_node.publish_task(robot.robot_id, "UNLOAD", x=0.6, y=0.28, yaw=0, pinky_id=process.assigned_mobile_robot_id)
+                    self.camera.ros_node.publish_task(robot.robot_id, "UNLOAD", x=0.6, y=0.58, yaw=0, pinky_id=process.assigned_mobile_robot_id)
                     messages.append(f"robot arm {robot.robot_id} 작업 지시")
-                    print(f"5, 'LOAD', x=0.58, y=0.28, yaw=0")
+                    print(f"5, 'LOAD', x=0.6, y=0.58, yaw=0")
 
                 if callable(self.on_task_assigned):
                     try:
@@ -1762,7 +1764,7 @@ class TaskManagerWidget(QWidget):
         target_pose = location.pose_m
         steps = [
             Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", (0.6,0.28, 0.0)),
-            Task(f"{process_id}_2", "LOAD", "ARM", (0.0,0.0, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
+            Task(f"{process_id}_2", "LOAD", "ARM", (0.0,1.0, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
             Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", target_pose), # 랙 위치
             Task(f"{process_id}_4", "WAIT_USER", "MOBILE", target_pose), # 랙 위치
         ]
@@ -1798,8 +1800,9 @@ class TaskManagerWidget(QWidget):
         # 작업 테이블 업데이트
         tasks = []
         for comp in self.manager.all_process_tasks:
-            for step in comp.steps:
-                tasks.append(step)
+            if comp.steps:
+                for step in comp.steps:
+                    tasks.append(step)
         # print(tasks)
 
         self.table.setRowCount(len(tasks))
