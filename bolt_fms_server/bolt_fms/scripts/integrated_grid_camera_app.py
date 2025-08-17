@@ -83,6 +83,8 @@ RACK_CONFIG = [
         "x_m": 1.53,
         "y_m": 0.33,
         "initial_occupied": [
+            (0,1,0),(1,1,0),
+            (0,1,1),(1,1,1),
         ]
     }
 ]
@@ -177,13 +179,17 @@ class RackManager:
                             return (rack.rack_id, floor, row, col)
         
         return None
-
+    
+import random
+import math
 class StockVisualizerWidget(QWidget):
     def __init__(self, rack_manager: RackManager):
         super().__init__()
         self.rack_manager = rack_manager
         self.setWindowTitle("랙 재고 상태 시각화 (층별) - 좌측 하단 원점")
         self.setGeometry(100, 100, 800, 600)
+        
+        self._candidate_index = 0  # 순환 커서
 
         self.SCALE_FACTOR = 500 # 1미터 = 100픽셀
         self.SCENE_HEIGHT_PX = 500 # Y좌표 뒤집기를 위한 가상 씬 높이
@@ -208,7 +214,7 @@ class StockVisualizerWidget(QWidget):
         self.find_space_button.clicked.connect(self.find_and_display_pose)
         
         # self.find_space_button1 = QPushButton("로봇 위치 찾기")
-        # self.find_space_button1.clicked.connect(self.get_robot_target_pose)
+        # self.find_space_button1.clicked.connect(self.get_inbound_target_pose)
 
         self.pose_label = QLabel("로봇 위치 (Pose): -")
         self.pose_label.setMinimumWidth(300)
@@ -460,7 +466,7 @@ class StockVisualizerWidget(QWidget):
             rack.reservation[floor][row][col] = occupied
             # self.update_visualization()
 
-    def get_robot_target_pose(self) -> MyLocation:
+    def get_inbound_target_pose(self) -> MyLocation:
         """
         가장 먼저 발견되는 가용 공간을 찾아 로봇의 목표 포즈를 계산하여 반환합니다.
         반환 값:
@@ -502,6 +508,65 @@ class StockVisualizerWidget(QWidget):
         self.set_reservation_occupied(rack_id, floor, row, col, True)
         location = MyLocation(rack_id=rack_id, floor=floor, row=row, col=col, pose_m=(x_m,y_m,yaw_rad),direction=robot_direction)
         return location
+
+    def get_outbound_target_pose(self) -> MyLocation:
+        """
+        순환 방식으로 후보 좌표를 하나 선택하고,
+        해당 랙 정보 기반으로 로봇의 물리적 위치를 계산하여 MyLocation 반환
+        """
+            # 후보 좌표 순환용
+        candidate_positions = [
+            (0, 1, 0),
+            (1, 1, 0),
+            (0, 1, 1),
+            (1, 1, 1),
+        ]
+
+        # 1️⃣ 후보 좌표 순환
+        row, col, floor = candidate_positions[self._candidate_index]
+        self._candidate_index = (self._candidate_index + 1) % len(candidate_positions)
+
+        # 2️⃣ 실제 존재하는 랙 중 하나 (예: rack_id=2)
+        rack: MyRack = list(self.rack_manager.racks.values())[1]  # 두 번째 랙 (rack_id=2)
+        rack_id = rack.rack_id
+
+        # 3️⃣ 안전한 로봇 위치 계산
+        robot_physical_pose_px, robot_direction = self.find_safe_border_pose(
+            rack_id, row, col
+        )
+        if not robot_physical_pose_px:
+            print("❌ 안전한 로봇 위치를 찾을 수 없습니다.")
+            return None
+
+        # 픽셀 → 미터 변환
+        x_m = round(robot_physical_pose_px.x() / self.SCALE_FACTOR, 2)
+        y_m = round(robot_physical_pose_px.y() / self.SCALE_FACTOR, 2)
+
+        # 방향 → yaw 변환
+        yaw_rad = 0.0
+        if robot_direction == 'up':
+            yaw_rad = math.radians(90)
+        elif robot_direction == 'down':
+            yaw_rad = math.radians(-90)
+        elif robot_direction == 'left':
+            yaw_rad = math.radians(180)
+        elif robot_direction == 'right':
+            yaw_rad = math.radians(0)
+        yaw_rad = round(yaw_rad, 2)
+
+        # 예약 처리
+        rack.reservation[floor][row][col] = True
+
+        # 4️⃣ 최종 MyLocation 반환
+        return MyLocation(
+            rack_id=rack_id,
+            floor=floor,
+            row=row,
+            col=col,
+            pose_m=(x_m, y_m, yaw_rad),
+            direction=robot_direction
+        )
+
 
 # Task 클래스에 가벼운 메타 필드 추가 (기존 코드와 역호환)
 class Task:
@@ -1326,34 +1391,50 @@ class DBWatcherWorker(QObject):
 
     def _poll_outbound(self):
         """
-        Outbound 테이블의 새로운 레코드를 확인합니다.
+        Orders + Orders_Item 테이블에서 order_status=0 (출고대기) 인 주문만 확인합니다.
         """
         new_rows = []
         with self.db.get_session() as session:
             try:
-                query = select(Outbound).order_by(desc(Outbound.ob_dttm))
+                # 주문일시 기준 내림차순 정렬 + 출고대기(status=0)만
+                query = (
+                    select(Orders)
+                    .where(Orders.order_status == 0)   # ✅ 상태 필터 추가
+                    .order_by(desc(Orders.order_dttm))
+                )
+                
                 if self.last_seen_ob_dttm:
-                    query = query.where(Outbound.ob_dttm > self.last_seen_ob_dttm)
+                    query = query.where(Orders.order_dttm > self.last_seen_ob_dttm)
                 
                 rows = session.execute(query).scalars().all()
 
                 if rows:
-                    new_rows = [
-                        {
-                            "ob_id": row.ob_id,
+                    new_rows = []
+                    for row in rows:
+                        new_rows.append({
                             "order_id": row.order_id,
-                            "ob_status": row.ob_status,
-                            "ob_dttm": row.ob_dttm.isoformat(),
-                            "destination": row.destination
-                        }
-                        for row in rows
-                    ]
-                    
-                    self.last_seen_ob_dttm = rows[0].ob_dttm.isoformat()
+                            "customer_id": row.customer_id,
+                            "order_status": row.order_status,
+                            "order_dttm": row.order_dttm.isoformat(),
+                            "destination": row.destination,
+                            "items": [
+                                {
+                                    "item_id": item.item_id,
+                                    "order_amount": item.order_amount,
+                                    "unit_price": float(item.unit_price)  # DECIMAL → float 변환
+                                }
+                                for item in row.order_items
+                            ]
+                        })
+
+                    # 최신 주문 시각 갱신
+                    self.last_seen_ob_dttm = rows[0].order_dttm.isoformat()
                     self.outbound_updated.emit(new_rows)
             
             except Exception as e:
-                print(f"⛔ 출고 데이터 조회 중 오류 발생: {e}")
+                print(f"⛔ 주문 데이터 조회 중 오류 발생: {e}")
+
+
 
 # ======================================================================
 # 경로 계획 관련 클래스들
@@ -1762,51 +1843,62 @@ class TaskManagerWidget(QWidget):
             self.ib_cnt += 1                
             remaining -= current_batch
         self.update_tables()
-            
-    def test_add_outbound(self):
-        """입고 작업 추가"""
-        # DB 풀링
-        
-        # 입고 박스 추가
-        item_amount = 4
-        batch_size = 4
-        
-        # 박스 개수를 배치사이즈만큼 프로세스 반복
-        remaining = item_amount
-        while remaining > 0:
-            current_batch = min(batch_size, remaining)
-            # 입고 프로세스 생성
-            if self.create_outbound_task(f"ob_{self.ob_cnt}"):
-                self.ob_cnt = self.ob_cnt + 1
-                self.manager.add_process_task(self.ob_cnt)
-                self.add_log(f"📤 출고 작업 {self.ob_cnt} 추가됨")
-            self.ib_cnt += 1                
-            remaining -= current_batch
+
+    def test_add_outbound(self, ob_id, items):
+        """출고 작업 추가"""
+        print(f"🚚 출고 등록: 주문번호={ob_id}")
+
+        # ✅ 만약 DB 조회 결과가 없으면 임시 테스트 데이터 사용
+        if not items:
+            print("⚠️ 주문 아이템이 없어 테스트용 데이터를 사용합니다.")
+            items = [{"item_id": 999, "order_amount": 4, "unit_price": 0.0}]  # 더미 데이터
+
+        for item in items:
+            item_id = item['item_id']
+            total_amount = item['order_amount']
+            unit_price = item['unit_price']
+
+            print(f"  - 상품 {item_id} | 수량={total_amount} | 단가={unit_price}")
+
+            # 배치 사이즈 (기본 4개 단위)
+            batch_size = 4
+            remaining = total_amount
+
+            while remaining > 0:
+                current_batch = min(batch_size, remaining)
+                # 출고 태스크 생성
+                process = self.create_outbound_task(f"ob_{self.ob_cnt}", item_id=item_id, item_amount=current_batch)
+                self.ob_cnt += 1
+                self.manager.add_process_task(process)
+                self.add_log(f"📤 출고 작업 {self.ob_cnt} 추가됨 " f"(상품 {item_id}, 수량 {current_batch})")
+                remaining -= current_batch
+
+            # UI 갱신
             self.update_tables()
             
     def create_inbound_task(self, process_id):
         """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
-        rack_location : MyLocation = self.visualizer_widget.get_robot_target_pose()
+        rack_location : MyLocation = self.visualizer_widget.get_inbound_target_pose()
         ib_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.28, 0.0))
         arm_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.28, 0.0))
         steps = [
-            Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", ib_location),
+            Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", ib_location), # 랙 위치
             Task(f"{process_id}_2", "LOAD", "ARM", arm_location), # 로봇 암이 픽업하는 위치; 안줘도 됨
-            Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", rack_location), # 랙 위치
+            Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", rack_location),
             Task(f"{process_id}_4", "WAIT_USER", "MOBILE", rack_location), # 랙 위치
         ]
         return ProcessTask(process_id, steps)
 
-    def create_outbound_task(self, process_id):
+    def create_outbound_task(self, process_id, item_id = None, item_amount = None):
         """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
-        location : MyLocation = self.visualizer_widget.get_robot_target_pose()
-        
-        target_pose = location.pose_m
+        rack_location : MyLocation = self.visualizer_widget.get_outbound_target_pose()
+        ob_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.78, 0.0))
+        arm_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.78, 0.0))
         steps = [
-            Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", (0.6,0.28, 0.0)),
-            Task(f"{process_id}_2", "LOAD", "ARM", (0.0,1.0, 0.0)), # 로봇 암이 픽업하는 위치; 안줘도 됨
-            Task(f"{process_id}_3", "MOVE_TO_RACK", "MOBILE", target_pose), # 랙 위치
-            Task(f"{process_id}_4", "WAIT_USER", "MOBILE", target_pose), # 랙 위치
+            Task(f"{process_id}_1", "MOVE_TO_RACK", "MOBILE", rack_location),
+            Task(f"{process_id}_2", "WAIT_USER", "MOBILE", rack_location), # 랙 위치
+            Task(f"{process_id}_3", "MOVE_TO_OUTBOUND", "MOBILE", ob_location), # 랙 위치
+            Task(f"{process_id}_4", "UNLOAD", "ARM", arm_location), # 로봇 암이 픽업하는 위치; 안줘도 됨
         ]
         return ProcessTask(process_id, steps)
 
@@ -3782,14 +3874,27 @@ class IntegratedGridCameraApp(QWidget):
         print(f"[Inbound] +{len(rows)} rows, latest ib_id={ib_id}, amount={amount}")
         
     def on_outbound_updated(self, rows):
-        latest = max(rows, key=lambda x: datetime.fromisoformat(x["ob_dttm"]))
-        ib_id = latest["ob_id"]
-        amount = latest["ib_amount"]
-        print(latest)
+        # 가장 최근 주문(출고) 선택
+        latest = max(rows, key=lambda x: datetime.fromisoformat(x["order_dttm"]))
+        
+        order_id = latest["order_id"]
+        customer_id = latest["customer_id"]
+        order_status = latest["order_status"]
+        order_dttm = latest["order_dttm"]
 
-        self.task_widget.test_add_outbound(ib_id=ib_id, amount=amount)
+        # ✅ 주문 상품 dict 리스트 가져오기
+        items_dict = latest["items"]
 
-        print(f"[Inbound] +{len(rows)} rows, latest ib_id={ib_id}, amount={amount}")
+        print("📦 최신 주문:", latest)
+        print("🛒 주문 상품 목록:", items_dict)
+
+        self.task_widget.test_add_outbound(
+            ob_id=order_id,  # 여기서는 order_id를 ob_id처럼 사용 가능
+            items=items_dict
+        )
+
+        print(f"[Outbound] +{len(rows)} rows, latest order_id={order_id}, items={len(items_dict)}개")
+
 
     def init_ui(self):
         """메인 UI 초기화"""
