@@ -2,6 +2,7 @@
 """
 PySide6를 사용하여 랙의 층별 재고 상태를 그리드로 시각화하는 위젯입니다.
 TaskManagerWidget에 StockVisualizerWidget이 통합되었습니다.
+좌표계가 좌측 하단을 원점(0,0)으로 하도록 수정되었습니다.
 """
 import sys
 from PySide6.QtWidgets import (
@@ -96,10 +97,11 @@ class StockVisualizerWidget(QWidget):
     def __init__(self, rack_manager: RackManager):
         super().__init__()
         self.rack_manager = rack_manager
-        self.setWindowTitle("랙 재고 상태 시각화 (층별)")
+        self.setWindowTitle("랙 재고 상태 시각화 (층별) - 좌측 하단 원점")
         self.setGeometry(100, 100, 800, 600)
         
         self.SCALE_FACTOR = 50 # 1미터 = 50픽셀
+        self.SCENE_HEIGHT_PX = 500 # Y좌표 뒤집기를 위한 가상 씬 높이
         self.ROBOT_CLEARANCE_M = 0.4
         self.ROBOT_CLEARANCE_PX = self.ROBOT_CLEARANCE_M * self.SCALE_FACTOR
         self.ROBOT_RADIUS_PX = 15
@@ -119,6 +121,9 @@ class StockVisualizerWidget(QWidget):
         
         self.find_space_button = QPushButton("가용 공간 찾기")
         self.find_space_button.clicked.connect(self.find_and_display_pose)
+        
+        self.find_space_button1 = QPushButton("로봇 위치 찾기")
+        self.find_space_button1.clicked.connect(self.get_robot_target_pose)
 
         self.pose_label = QLabel("로봇 위치 (Pose): -")
         self.pose_label.setMinimumWidth(300)
@@ -126,6 +131,7 @@ class StockVisualizerWidget(QWidget):
         control_layout.addWidget(QLabel("층 선택:"))
         control_layout.addWidget(self.floor_selector)
         control_layout.addWidget(self.find_space_button)
+        control_layout.addWidget(self.find_space_button1)
         control_layout.addStretch(1)
         control_layout.addWidget(self.pose_label)
         
@@ -172,7 +178,7 @@ class StockVisualizerWidget(QWidget):
                 self.pose_label.setText(
                     f"로봇 위치(Pose): 랙 {rack_id} / 층 {z_pos} / ({row}, {col})\n"
                     f"바라보는 방향: {self.robot_direction}\n"
-                    f"물리적 위치: (X={self.robot_physical_pose_m.x():.2f}m, Y={self.robot_physical_pose_m.y():.2f}m)"
+                    f"물리적 위치 (좌하단 원점): (X={self.robot_physical_pose_m.x():.2f}m, Y={self.robot_physical_pose_m.y():.2f}m)\n"
                     f" (픽셀: X={self.robot_physical_pose_px.x():.1f}, Y={self.robot_physical_pose_px.y():.1f})"
                 )
             else:
@@ -190,27 +196,29 @@ class StockVisualizerWidget(QWidget):
     def find_safe_border_pose(self, target_rack_id: int, row: int, col: int) -> Tuple[Optional[QPointF], Optional[str]]:
         """
         주어진 칸의 경계선 바깥에 위치하며 다른 랙과 겹치지 않는 안전한 로봇 위치를 찾습니다.
+        좌표계는 좌측 하단을 원점으로 합니다.
         우선순위: 오른쪽 > 왼쪽 > 아래 > 위
         """
         found_rack_obj = self.rack_manager.get_rack(target_rack_id)
         
-        rack_boundaries = []
+        # 충돌 검사를 위해 Qt의 좌상단 원점 좌표계로 변환된 랙 경계 정보를 생성
+        rack_boundaries_qt = []
         for rack in self.rack_manager.get_all_racks().values():
             rack_width_px = rack.cols * (rack.cell_width_m * self.SCALE_FACTOR)
             rack_height_px = rack.rows * (rack.cell_height_m * self.SCALE_FACTOR)
+            rack_x_px = rack.x_m * self.SCALE_FACTOR
+            rack_y_px = rack.y_m * self.SCALE_FACTOR
             
-            rack_rect = QRectF(
-                rack.x_m * self.SCALE_FACTOR,
-                rack.y_m * self.SCALE_FACTOR,
-                rack_width_px,
-                rack_height_px
-            )
-            rack_boundaries.append((rack.rack_id, rack_rect))
+            # 좌하단 기준 Y -> 좌상단 기준 Y로 변환하여 QRectF 생성
+            qt_rack_y = self.SCENE_HEIGHT_PX - (rack_y_px + rack_height_px)
+            
+            rack_rect_qt = QRectF(rack_x_px, qt_rack_y, rack_width_px, rack_height_px)
+            rack_boundaries_qt.append((rack.rack_id, rack_rect_qt))
         
         cell_width_px = found_rack_obj.cell_width_m * self.SCALE_FACTOR
         cell_height_px = found_rack_obj.cell_height_m * self.SCALE_FACTOR
         
-        # 랙의 절대 위치(픽셀) 계산
+        # 랙의 절대 위치(픽셀, 좌하단 원점)
         rack_x_px = found_rack_obj.x_m * self.SCALE_FACTOR
         rack_y_px = found_rack_obj.y_m * self.SCALE_FACTOR
         
@@ -218,38 +226,41 @@ class StockVisualizerWidget(QWidget):
         
         # 오른쪽
         x_pos = rack_x_px + (col + 1) * cell_width_px + self.ROBOT_CLEARANCE_PX
-        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px + cell_height_px / 2
+        y_pos = rack_y_px + row * cell_height_px + cell_height_px / 2
         candidate_poses.append((QPointF(x_pos, y_pos), 'right'))
         
         # 왼쪽
         x_pos = rack_x_px + col * cell_width_px - self.ROBOT_CLEARANCE_PX
-        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px + cell_height_px / 2
+        y_pos = rack_y_px + row * cell_height_px + cell_height_px / 2
         candidate_poses.append((QPointF(x_pos, y_pos), 'left'))
         
         # 아래쪽
         x_pos = rack_x_px + col * cell_width_px + cell_width_px / 2
-        y_pos = rack_y_px + (found_rack_obj.rows - 1 - (row - 1)) * cell_height_px + self.ROBOT_CLEARANCE_PX
+        y_pos = rack_y_px + row * cell_height_px - self.ROBOT_CLEARANCE_PX
         candidate_poses.append((QPointF(x_pos, y_pos), 'down'))
 
         # 위쪽
         x_pos = rack_x_px + col * cell_width_px + cell_width_px / 2
-        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px - self.ROBOT_CLEARANCE_PX
+        y_pos = rack_y_px + (row + 1) * cell_height_px + self.ROBOT_CLEARANCE_PX
         candidate_poses.append((QPointF(x_pos, y_pos), 'up'))
         
         for pose, direction in candidate_poses:
-            robot_rect = QRectF(pose.x() - self.ROBOT_RADIUS_PX, pose.y() - self.ROBOT_RADIUS_PX, self.ROBOT_RADIUS_PX * 2, self.ROBOT_RADIUS_PX * 2)
+            # 충돌 검사를 위해 후보 위치(좌하단 원점)를 Qt의 좌상단 원점 기준으로 변환
+            qt_pose_y = self.SCENE_HEIGHT_PX - pose.y()
+            robot_rect_qt = QRectF(pose.x() - self.ROBOT_RADIUS_PX, qt_pose_y - self.ROBOT_RADIUS_PX, self.ROBOT_RADIUS_PX * 2, self.ROBOT_RADIUS_PX * 2)
+            
             is_safe = True
-            for _, rack_rect in rack_boundaries:
-                if robot_rect.intersects(rack_rect):
+            for _, rack_rect_qt in rack_boundaries_qt:
+                if robot_rect_qt.intersects(rack_rect_qt):
                     is_safe = False
                     break
             if is_safe:
-                return pose, direction
+                return pose, direction # 안전한 위치는 좌하단 원점 기준으로 반환
         
         # 모든 경계가 다른 랙과 겹치는 경우, 통로 중앙으로 폴백합니다.
         aisle_width_px_fallback = found_rack_obj.margin_m * self.SCALE_FACTOR
         x_pos = rack_x_px + found_rack_obj.cols * cell_width_px + aisle_width_px_fallback / 2
-        y_pos = rack_y_px + (found_rack_obj.rows - 1 - row) * cell_height_px + cell_height_px / 2
+        y_pos = rack_y_px + row * cell_height_px + cell_height_px / 2
         return QPointF(x_pos, y_pos), 'left'
 
     def update_visualization(self):
@@ -262,13 +273,9 @@ class StockVisualizerWidget(QWidget):
             if self.current_floor >= rack.floors:
                 continue
             
-            # 랙의 절대 위치(픽셀)
+            # 랙의 절대 위치(픽셀, 좌하단 원점)
             rack_x_px = rack.x_m * self.SCALE_FACTOR
             rack_y_px = rack.y_m * self.SCALE_FACTOR
-            
-            # 랙의 전체 크기(픽셀)
-            rack_width_px = rack.cols * (rack.cell_width_m * self.SCALE_FACTOR)
-            rack_height_px = rack.rows * (rack.cell_height_m * self.SCALE_FACTOR)
             
             cell_width_px = rack.cell_width_m * self.SCALE_FACTOR
             cell_height_px = rack.cell_height_m * self.SCALE_FACTOR
@@ -276,7 +283,10 @@ class StockVisualizerWidget(QWidget):
             for r in range(rack.rows):
                 for c in range(rack.cols):
                     grid_x = rack_x_px + c * cell_width_px
-                    grid_y = rack_y_px + (rack.rows - 1 - r) * cell_height_px
+                    
+                    # Y좌표를 좌하단 원점 기준으로 계산 후, 그리기를 위해 좌상단 원점 기준으로 변환
+                    cell_y_bl = rack_y_px + r * cell_height_px # 셀의 좌하단 Y
+                    grid_y = self.SCENE_HEIGHT_PX - (cell_y_bl + cell_height_px) # 그리기 위한 좌상단 Y
                     
                     is_occupied = rack.locations[self.current_floor][r][c]
                     
@@ -303,11 +313,13 @@ class StockVisualizerWidget(QWidget):
 
         # --- 로봇 시각화 부분 시작 ---
         if self.robot_physical_pose_px:
-            robot_center = self.robot_physical_pose_px
+            # 로봇의 위치(좌하단 원점)를 그리기를 위해 좌상단 원점 기준으로 변환
+            robot_center_x = self.robot_physical_pose_px.x()
+            robot_center_y_qt = self.SCENE_HEIGHT_PX - self.robot_physical_pose_px.y()
             
             robot = QGraphicsEllipseItem(
-                robot_center.x() - self.ROBOT_RADIUS_PX,
-                robot_center.y() - self.ROBOT_RADIUS_PX,
+                robot_center_x - self.ROBOT_RADIUS_PX,
+                robot_center_y_qt - self.ROBOT_RADIUS_PX,
                 self.ROBOT_RADIUS_PX * 2,
                 self.ROBOT_RADIUS_PX * 2
             )
@@ -320,21 +332,21 @@ class StockVisualizerWidget(QWidget):
             polygon = QPolygonF()
             
             if self.robot_direction == 'left':
-                polygon.append(QPointF(robot_center.x() - self.ROBOT_RADIUS_PX, robot_center.y()))
-                polygon.append(QPointF(robot_center.x() - self.ROBOT_RADIUS_PX - arrow_size, robot_center.y() - arrow_size / 2))
-                polygon.append(QPointF(robot_center.x() - self.ROBOT_RADIUS_PX - arrow_size, robot_center.y() + arrow_size / 2))
+                polygon.append(QPointF(robot_center_x - self.ROBOT_RADIUS_PX, robot_center_y_qt))
+                polygon.append(QPointF(robot_center_x - self.ROBOT_RADIUS_PX - arrow_size, robot_center_y_qt - arrow_size / 2))
+                polygon.append(QPointF(robot_center_x - self.ROBOT_RADIUS_PX - arrow_size, robot_center_y_qt + arrow_size / 2))
             elif self.robot_direction == 'right':
-                polygon.append(QPointF(robot_center.x() + self.ROBOT_RADIUS_PX, robot_center.y()))
-                polygon.append(QPointF(robot_center.x() + self.ROBOT_RADIUS_PX + arrow_size, robot_center.y() - arrow_size / 2))
-                polygon.append(QPointF(robot_center.x() + self.ROBOT_RADIUS_PX + arrow_size, robot_center.y() + arrow_size / 2))
+                polygon.append(QPointF(robot_center_x + self.ROBOT_RADIUS_PX, robot_center_y_qt))
+                polygon.append(QPointF(robot_center_x + self.ROBOT_RADIUS_PX + arrow_size, robot_center_y_qt - arrow_size / 2))
+                polygon.append(QPointF(robot_center_x + self.ROBOT_RADIUS_PX + arrow_size, robot_center_y_qt + arrow_size / 2))
             elif self.robot_direction == 'up':
-                polygon.append(QPointF(robot_center.x(), robot_center.y() - self.ROBOT_RADIUS_PX))
-                polygon.append(QPointF(robot_center.x() - arrow_size / 2, robot_center.y() - self.ROBOT_RADIUS_PX - arrow_size))
-                polygon.append(QPointF(robot_center.x() + arrow_size / 2, robot_center.y() - self.ROBOT_RADIUS_PX - arrow_size))
+                polygon.append(QPointF(robot_center_x, robot_center_y_qt - self.ROBOT_RADIUS_PX))
+                polygon.append(QPointF(robot_center_x - arrow_size / 2, robot_center_y_qt - self.ROBOT_RADIUS_PX - arrow_size))
+                polygon.append(QPointF(robot_center_x + arrow_size / 2, robot_center_y_qt - self.ROBOT_RADIUS_PX - arrow_size))
             elif self.robot_direction == 'down':
-                polygon.append(QPointF(robot_center.x(), robot_center.y() + self.ROBOT_RADIUS_PX))
-                polygon.append(QPointF(robot_center.x() - arrow_size / 2, robot_center.y() + self.ROBOT_RADIUS_PX + arrow_size))
-                polygon.append(QPointF(robot_center.x() + arrow_size / 2, robot_center.y() + self.ROBOT_RADIUS_PX + arrow_size))
+                polygon.append(QPointF(robot_center_x, robot_center_y_qt + self.ROBOT_RADIUS_PX))
+                polygon.append(QPointF(robot_center_x - arrow_size / 2, robot_center_y_qt + self.ROBOT_RADIUS_PX + arrow_size))
+                polygon.append(QPointF(robot_center_x + arrow_size / 2, robot_center_y_qt + self.ROBOT_RADIUS_PX + arrow_size))
             
             if not polygon.isEmpty():
                 arrow.setPolygon(polygon)
@@ -377,7 +389,7 @@ class StockVisualizerWidget(QWidget):
             print("안전한 로봇 위치를 찾을 수 없습니다.")
             return None
 
-        # 픽셀을 미터로 변환
+        # 픽셀을 미터로 변환 (좌하단 원점 기준)
         x_m = round(robot_physical_pose_px.x() / self.SCALE_FACTOR, 2)
         y_m = round(robot_physical_pose_px.y() / self.SCALE_FACTOR, 2)
         
@@ -391,6 +403,7 @@ class StockVisualizerWidget(QWidget):
             yaw_rad = math.radians(180)
         elif robot_direction == 'right':
             yaw_rad = math.radians(0)
+        yaw_rad = round(yaw_rad, 2)
 
         self.set_location_occupied(rack_id, floor, row, col, True)
         location = Location(rack_id=rack_id, floor=floor, row=row, col=col, pose_m=(x_m,y_m,yaw_rad),direction=robot_direction)
