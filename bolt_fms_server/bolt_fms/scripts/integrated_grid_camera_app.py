@@ -3703,14 +3703,14 @@ class GridCameraWidget(QWidget):
 class InOutInventoryWidget(QWidget):
     """좌상=입고, 좌하=출고, 우측=재고 테이블 배치 탭"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, task_widget=None):
         super().__init__(parent)
 
         # ── 테이블 위젯들 ─────────────────────────────────────
         self.inbound_table = QTableWidget(0, 4)  # 입고
         self.outbound_table = QTableWidget(0, 4)  # 출고
         self.inventory_table = QTableWidget(0, 5)  # 재고
-        self.chatbot_widget = RAGChatbot()
+        self.chatbot_widget = RAGChatbot(task_widget=task_widget)  # TaskManagerWidget 전달
 
         self.inbound_table.setHorizontalHeaderLabels(["입고ID", "품목", "수량", "일시"])
         self.outbound_table.setHorizontalHeaderLabels(
@@ -3915,7 +3915,7 @@ class IntegratedGridCameraApp(QWidget):
         self.tab_widget.addTab(self.task_widget, "📋 작업 스케줄 관리")
 
         # 탭 3: 입출고 재고 내역 페이지
-        self.table_widget = InOutInventoryWidget()
+        self.table_widget = InOutInventoryWidget(task_widget=self.task_widget)
         self.tab_widget.addTab(self.table_widget, "📋 물류 입출고 재고 내역 확인")
 
         # 탭 4: 테스트
@@ -4101,11 +4101,11 @@ def get_db_data_for_rag(query_keywords):
     return related_data_info
 
 class RAGChatbot(QWidget):
-    def __init__(self):
+    def __init__(self, task_widget=None):
         super().__init__()
+        self.task_widget = task_widget  # TaskManagerWidget 참조 저장
         self.initUI()
         self.db_schema = get_db_schema_info()
-        self.gemini_worker = None
 
     def initUI(self):
         self.setWindowTitle('물류 창고 RAG 챗봇 (Gemini 1.5 Flash)')
@@ -4150,27 +4150,84 @@ class RAGChatbot(QWidget):
             # 1. 오늘 날짜 정보 가져오기
             today_date = datetime.now().strftime("%Y년 %m월 %d일")
             
-            # 2. 키워드를 기반으로 DB에서 관련 데이터 조회
+            # 2-1. 키워드를 기반으로 DB에서 관련 데이터 조회
             db_data = get_db_data_for_rag(user_question)
+
+            # 2-2. 로봇 상태 및 작업 현황 데이터를 문자열로 변환
+            robot_status_info = ""
+            task_status_info = ""
+            
+            if self.task_widget:
+                robot_status_info = self.convert_table_to_string(self.task_widget.robot_status_table, "로봇 상태 현황")
+                task_status_info = self.convert_table_to_string(self.task_widget.table, "전체 작업 현황")
+            else:
+                robot_status_info = "로봇 상태 데이터를 불러올 수 없습니다."
+                task_status_info = "작업 현황 데이터를 불러올 수 없습니다."
             
             # 3. DB 스키마, 현재 날짜, 실제 데이터를 포함한 RAG 프롬프트 구성
             prompt_template = (
                 "당신은 물류 창고 관리 시스템의 AI 챗봇입니다. "
                 "사용자가 요청하는 데이터가 있을 경우, 아래 제공된 데이터베이스 스키마와 실제 데이터를 바탕으로 답변하세요. "
-                "답변할 때는 친절하고, 명확하며, 상세하게 설명해주세요. "
-                "특히, **아래에 제공된 '현재 날짜' 정보를 참고**하여 '오늘'이나 '어제'와 같은 시간 관련 질문에 답변해주세요."
+                "또한, 현재 **로봇 상태**와 **전체 작업 현황** 정보를 참고하여 답변을 보충하세요. "
+                "특히, 아래 제공된 '메시지 해석 규칙'을 참고하여 로봇 ID, 작업 타입, 상태를 올바르게 해석하고, "
+                "친절하고, 명확하며, 상세하게 설명해주세요. "
+                "**아래에 제공된 '현재 날짜' 정보를 참고**하여 '오늘'이나 '어제'와 같은 시간 관련 질문에 답변해주세요."
                 "데이터가 존재하지 않거나 질문에 대한 정보가 부족할 경우, '죄송합니다. 현재 데이터에 요청하신 정보가 없습니다.'와 같이 정중하게 답하고, "
-                "어떤 데이터가 필요한지(예: 특정 날짜의 주문 정보)를 구체적으로 알려주세요. "
+                "필요한 정보를 구체적으로 알려주세요. "
                 "답변은 가독성을 높이기 위해 불릿 포인트(`*` 또는 `-`)를 활용하여 정리해주세요.\n\n"
                 
                 f"{self.db_schema}\n\n"
                 f"## 현재 날짜 정보\n"
                 f"현재 날짜는 {today_date}입니다.\n\n"
-                f"## 데이터베이스에서 조회한 실제 데이터\n\n"
+                f"## 데이터베이스에서 조회한 실제 데이터\n"
                 f"{db_data}"
+
+                f"## 실시간 로봇 상태 및 작업 현황\n"
+                f"{robot_status_info}\n"
+                f"{task_status_info}\n\n"
+
+                f"## 메시지 해석 규칙\n"
+                f"- **로봇 ID 및 타입**: 각 로봇 ID는 다음과 같은 고유한 이름과 타입을 가집니다.\n"
+                f"  - `1`: 볼트봇1 (모바일 로봇)\n"
+                f"  - `2`: 볼트봇2 (모바일 로봇)\n"
+                f"  - `3`: 볼트봇3 (모바일 로봇)\n"
+                f"  - `4`: 볼트암1 (로봇팔)\n"
+                f"  - `5`: 볼트암2 (로봇팔)\n\n"
+                
+                f"- **로봇 작업 (Task Type) 상세 설명**:\n"
+                f"  - **모바일 로봇 (볼트봇 1, 2, 3)**: 바닥을 이동하며 물품을 운반하는 로봇입니다.\n"
+                f"    - `IDLE`: 작업을 마치고 다음 명령을 대기하는 유휴 상태입니다.\n"
+                f"    - `MOVE`: 특정 목표 위치로 이동 중입니다.\n"
+                f"    - `MOVE_TO_INBOUND`: 입고 작업 물품을 받기 위해 '입고장'으로 이동 중입니다.\n"
+                f"    - `MOVE_TO_OUTBOUND`: 출고 작업 물품을 전달하기 위해 '출고장'으로 이동 중입니다.\n"
+                f"    - `CHARGE`: 배터리 충전을 위해 충전소로 이동하거나 충전 중입니다.\n"
+                f"    - `WAIT_USER`: 작업자(사람)의 다음 지시를 기다리고 있습니다. 주로 랙(선반) 앞에서 집품/진열 작업을 대기할 때 사용됩니다.\n"
+                f"  - **로봇 팔 (볼트암 4, 5)**: 특정 위치에서 물품을 집거나 놓는 작업을 수행합니다.\n"
+                f"    - `IDLE`: 작업을 마치고 다음 명령을 대기하는 유휴 상태입니다.\n"
+                f"    - `LOAD`: 입고 물품을 트레이나 다른 위치에 '적재'하고 있습니다.\n"
+                f"    - `UNLOAD`: 트레이나 랙에 있는 물품을 '하역'하고 있습니다.\n\n"
+                
+                f"- **로봇 상태 (Status) 상세 설명**:\n"
+                f"  - `PENDING`: 작업이 아직 할당되지 않고 대기 중인 상태입니다.\n"
+                f"  - `ASSIGNED`: 작업이 할당되었지만 아직 시작하지 않은 상태입니다.\n"
+                f"  - **모바일 로봇 (볼트봇)**:\n"
+                f"    - `INPROGRESS`: 현재 할당된 `MOVE` 작업(이동)을 수행하고 있습니다.\n"
+                f"    - `COMPLETE`: 할당된 작업을 완료했습니다.\n"
+                f"    - `OBSTACLE`: 이동 경로에 장애물이 있어 멈춰선 상태입니다.\n"
+                f"    - `LOW_BATTERY`: 배터리 잔량이 낮아 충전이 필요합니다.\n"
+                f"  - **로봇 팔 (볼트암)**:\n"
+                f"    - `INPROGRESS`: 현재 할당된 `PICK` 또는 `PLACE` 작업을 수행하고 있습니다.\n"
+                f"    - `COMPLETE`: 할당된 작업을 완료했습니다.\n"
+                f"    - `ERROR`: 작업 중 예상치 못한 오류가 발생했습니다.\n\n"
+                
+                f"- **작업 현황 (Process)**: 입고(`ib_`) 및 출고(`ob_`) 작업은 여러 개의 순차적인 작업(`Task ID`)으로 구성됩니다.\n"
+                f"  - **입고 작업(`ib_`)**: `MOVE_TO_INBOUND` → `LOAD` → `MOVE_TO_RACK` → `WAIT_USER` 순서로 진행됩니다.\n"
+                f"  - **출고 작업(`ob_`)**: `MOVE_TO_RACK` → `WAIT_USER` → `MOVE_TO_OUTBOUND` → `UNLOAD` 순서로 진행됩니다.\n\n"
+                
                 f"사용자 질문: {user_question}\n\n"
                 "답변: "
             )
+
 
             # Gemini API 호출을 위한 스레드 시작
             self.gemini_worker = GeminiWorker(prompt_template)
@@ -4195,6 +4252,28 @@ class RAGChatbot(QWidget):
         self.input_field.setEnabled(True)
         self.send_button.setEnabled(True)
         self.status_label.setText("준비 완료")
+
+    # RAGChatbot 클래스에 새로운 메서드 추가
+    def convert_table_to_string(self, table_widget, title):
+        """QTableWidget의 내용을 Markdown 테이블 문자열로 변환합니다."""
+        if not table_widget:
+            return f"### {title}\n정보 없음.\n"
+
+        data_list = []
+        # 헤더 추출
+        headers = [table_widget.horizontalHeaderItem(col).text() for col in range(table_widget.columnCount())]
+        data_list.append(headers)
+
+        # 데이터 추출
+        for row in range(table_widget.rowCount()):
+            row_data = [table_widget.item(row, col).text() for col in range(table_widget.columnCount())]
+            data_list.append(row_data)
+
+        # pandas DataFrame을 사용하여 Markdown으로 변환
+        df = pd.DataFrame(data_list[1:], columns=data_list[0])
+        markdown_table = df.to_markdown(index=False)
+        
+        return f"### {title}\n{markdown_table}\n"
 
 
 
