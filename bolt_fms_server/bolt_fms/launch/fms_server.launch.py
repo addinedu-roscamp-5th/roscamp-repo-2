@@ -42,11 +42,11 @@ def generate_launch_description():
         #     executable='monitoring_manager_node',
         #     name='monitoring_manager'
         # ),
-        # Node(
-        #     package='bolt_fms',
-        #     executable='bolt_fms_core',
-        #     name='bolt_fms_core'
-        # ),
+        Node(
+            package='bolt_fms',
+            executable='tcp_gateway',
+            name='tcp_gateway'
+        ),
         Node(
             package='bolt_fms',
             executable='integrated_grid_camera_app.py',
