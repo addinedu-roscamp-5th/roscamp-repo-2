@@ -51,12 +51,13 @@ from builtin_interfaces.msg import Time
 
 # 로봇 ID와 AprilTag ID 매핑
 ROBOT_CONFIG = {
-    1: 4,
-    2: 2,
-    3: 563,
-    4: 0,
-    5: 0,
+    1: {"tag_id": 4, "position": (-999, -999, 0)},   # (x, y, yaw)
+    2: {"tag_id": 2, "position": (-999, -999, 0)},
+    3: {"tag_id": 563, "position": (-999, -999, 0)},
+    4: {"tag_id": 0, "position": (0.3, 0.7, 0.0)},           
+    5: {"tag_id": 0, "position": (0.3, 0.3, 0.0)},
 }
+
 
 RACK_CONFIG = [
     {
@@ -718,6 +719,8 @@ class RobotStatusNode(Node):
         if robot_id in self.robots:
             # ❌ Robot 객체의 battery 속성에 실제 값을 할당
             self.robots[robot_id].status = msg.data
+            # if robot_id == 5:
+            # self.get_logger().error(f"Robot {robot_id} status updated: {msg.data}")
 
     def battery_callback(self, msg, robot_id):
         """로봇의 배터리 메시지를 수신하면 호출되는 콜백 함수"""
@@ -876,6 +879,7 @@ class ProcessTask:
         return self.assigned_mobile_robot_id == robot_id and not self.is_done()
 
 import select_location
+import threading
 
 class TaskManager:
     def __init__(self, camera = None):
@@ -896,7 +900,14 @@ class TaskManager:
         step = process.current_step()
         if step:
             self.task_queue.put((step.priority, time.time(), step))
-    
+
+    async def handle_wait_user(self, robot, task):
+        robot.assign_task(task)
+        time.sleep(5.0)
+        print("작업자 대기중 ...")
+        self.complete_task(robot.robot_id)
+        print("작업자 작업완료")
+
     # TaskManager 클래스의 assign_tasks_waypoint 메서드
     def assign_tasks_waypoint(self):
         """Taskmanager 작업 할당 실시!"""
@@ -1009,13 +1020,8 @@ class TaskManager:
 
                 elif task.robot_type == "MOBILE" and task.task_type == "WAIT_USER":
                     # 모바일 로봇이 사용자 대기 작업을 수행하는 경우
-                    print(task.location)
-                    robot.assign_task(task)
-                    
-                    time.sleep(5.0)
-                    print("작업자 대기중 ...")
-                    self.complete_task(robot.robot_id)
-                    print("작업자 작업완료")
+                    # print(task.location)
+                    threading.Thread(target=self.handle_wait_user, args=(robot, task), daemon=True).start()
 
                 elif task.robot_type == "ARM" and task.task_type == "LOAD":
                     loc : MyLocation = task.location
@@ -1088,18 +1094,32 @@ class TaskManager:
         robot.status = "PENDING"
         robot.create_idle_task()
 
-        # process task 찾고 다음 단계로 진행
+        # # process task 찾고 다음 단계로 진행
+        # for comp in self.all_process_tasks:
+        #     if task in comp.steps:
+        #         comp.advance()
+        #         next_step = comp.current_step()
+        #         if next_step:
+        #             self.task_queue.put((next_step.priority, time.time(), next_step))
+        #             return f"✅ Completed task {task.task_id}, next step {next_step.task_type} enqueued"
+        #         else:
+        #             return f"✅ Process task {comp.task_id} fully completed"
+
+        # return f"✅ Task {task.task_id} completed by Robot {robot_id}"
         for comp in self.all_process_tasks:
-            if task in comp.steps:
+            if any(step.task_id == task.task_id for step in comp.steps):
                 comp.advance()
                 next_step = comp.current_step()
-                if next_step:
+
+                if next_step is not None:
                     self.task_queue.put((next_step.priority, time.time(), next_step))
+                    self.assign_tasks_waypoint()
                     return f"✅ Completed task {task.task_id}, next step {next_step.task_type} enqueued"
                 else:
                     return f"✅ Process task {comp.task_id} fully completed"
 
         return f"✅ Task {task.task_id} completed by Robot {robot_id}"
+
 
 
 # -*- coding: utf-8 -*-
@@ -1476,7 +1496,7 @@ class MultiRobotPathPlanner:
         self.obstacles: Set[Tuple[int, int]] = set()
         self.robot_paths: Dict[int, List[Tuple[int, int]]] = {}
         self.robot_goals: Dict[int, Tuple[float, float, float]] = {}
-        self.safety_margin = 1  # 로봇 간 안전 거리 (그리드 셀 단위)
+        self.safety_margin = 2  # 로봇 간 안전 거리 (그리드 셀 단위)
 
     def set_obstacles(self, obstacles: Set[Tuple[int, int]]):
         """장애물 위치 설정"""
@@ -1527,15 +1547,14 @@ class MultiRobotPathPlanner:
         neighbors = []
         # directions 리스트에 (0, 0) 추가
         directions = [
-            (-1, -1),
+            # (-1, -1),
             (-1, 0),
-            (-1, 1),
+            # (-1, 1),
             (0, -1),
             (0, 1),
-            (1, -1),
+            # (1, -1),
             (1, 0),
-            (1, 1),
-            (0,0)
+            # (1, 1),
         ]
 
         for dr, dc in directions:
@@ -1712,7 +1731,13 @@ class TaskManagerWidget(QWidget):
             self.rack_manager.add_rack(new_rack)
         # 2. visualizer_widget을 초기화합니다.
         self.visualizer_widget = StockVisualizerWidget(self.rack_manager)
-        
+
+        # 타이머 생성 (2초 간격)
+        self.assign_timer = QTimer(self)
+        self.assign_timer.setInterval(2000)  # 2000ms = 2초
+        self.assign_timer.timeout.connect(self.auto_assign_tasks)
+
+
         # 3. 모든 필요한 객체가 준비된 후에 UI를 초기화합니다.
         self.init_ui()
 
@@ -1720,7 +1745,20 @@ class TaskManagerWidget(QWidget):
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.update_tables)
         self.update_timer.start(1000)
+    def auto_assign_tasks(self):
+        self.manager.assign_tasks_waypoint()
+        self.update_tables()
 
+    # 버튼 클릭 시 타이머 on/off 토글
+    def toggle_auto_assign(self):
+        if self.assign_timer.isActive():
+            self.assign_timer.stop()
+            self.btn_auto_assign.setText("⏱️ 2초마다 작업 할당 실행")
+            print("자동 작업할당 중지")
+        else:
+            self.assign_timer.start()
+            self.btn_auto_assign.setText("⏹️ 자동 작업할당 중지")
+            print("자동 작업할당 시작")
 
     def init_ui(self):
         """작업 관리 UI 초기화"""
@@ -1764,6 +1802,11 @@ class TaskManagerWidget(QWidget):
         self.btn_assign.clicked.connect(self.test_assign_tasks_waypoints)
         self.btn_assign.setStyleSheet("QPushButton { padding: 10px; font-size: 14px; background-color: #4CAF50; color: white; }")
         left_button_layout.addWidget(self.btn_assign)
+
+        # 버튼 생성
+        self.btn_auto_assign = QPushButton("⏱️ 2초마다 작업 할당 실행", self)
+        self.btn_auto_assign.clicked.connect(self.toggle_auto_assign)
+        left_button_layout.addWidget(self.btn_auto_assign)
 
         right_button_widget = QWidget()
         right_button_layout = QVBoxLayout(right_button_widget)
@@ -2030,7 +2073,7 @@ class GridCameraWidget(QWidget):
         self.ros_sub_node = None
         self.task_widget : TaskManagerWidget = None
         # === 설정 값 ===
-        self.camera_index = 0
+        self.camera_index = 2
         self.grid_rows = 5
         self.grid_cols = 10
         self.real_width = 2  # 실제 너비 (미터)
@@ -2479,9 +2522,10 @@ class GridCameraWidget(QWidget):
 
     def get_robot_id_by_tag(self, tag_id):
         """태그 ID로 로봇 ID 찾기"""
-        for robot_id, robot_tag_id in ROBOT_CONFIG.items():
-            if robot_tag_id == tag_id:
+        for robot_id, info in ROBOT_CONFIG.items():
+            if info["tag_id"] == tag_id:
                 return robot_id
+
         return None
 
     def calculate_yaw_from_corners(self, corners):
@@ -3832,9 +3876,12 @@ class IntegratedGridCameraApp(QWidget):
         self.db : DBManager = DBManager()
 
         self.robots = {}
-        for robot_id, tag_id in ROBOT_CONFIG.items():
+        for robot_id, info in ROBOT_CONFIG.items():
+            tag_id = info["tag_id"]
+            position = info["position"]
+
             if tag_id == 0:
-                robot_type = "ARM" # 예시로 모든 로봇을 MOBILE로 설정
+                robot_type = "ARM"    # tag_id가 0이면 ARM
             else:
                 robot_type = "MOBILE"
 
@@ -3842,11 +3889,17 @@ class IntegratedGridCameraApp(QWidget):
                 robot_id=robot_id,
                 tag_id=tag_id,
                 robot_type=robot_type,
-                current_pose=(0,0,0),
-                current_task= Task(-1,task_type="IDLE",robot_type=robot_type,location=None),
+                current_pose=position,  # 초기 포즈를 config에 저장된 값으로 설정
+                current_task=Task(
+                    -1,
+                    task_type="IDLE",
+                    robot_type=robot_type,
+                    location=None
+                ),
                 status="PENDING",
                 joint_angles=[]
             )
+
             print(f"로봇 객체 생성 완료: {self.robots[robot_id]}")
         self.init_ui()
 

@@ -31,13 +31,13 @@ topics:
     type: std_msgs/msg/String
     from_domain: 34
     to_domain: 0
-    remap: robot2/task_status
+    remap: robot4/task_status
 
   task_status:
     type: std_msgs/msg/String
     from_domain: 35
     to_domain: 0
-    remap: robot3/task_status
+    remap: robot5/task_status
 
 # battery topics --------------------------------
   pinky_battery_present:
