@@ -1021,8 +1021,7 @@ class TaskManager:
                 elif task.robot_type == "MOBILE" and task.task_type == "WAIT_USER":
                     # 모바일 로봇이 사용자 대기 작업을 수행하는 경우
                     # print(task.location)
-                    threading.Thread(target=self.handle_wait_user, args=(robot, task), daemon=True).start()
-
+                    pass
                 elif task.robot_type == "ARM" and task.task_type == "LOAD":
                     loc : MyLocation = task.location
                     
@@ -1090,6 +1089,8 @@ class TaskManager:
         loc : MyLocation = task.location
         if task.task_type == "WAIT_USER":
             self.camera.task_widget.visualizer_widget.set_location_occupied(loc.rack_id, loc.floor, loc.row, loc.col, True)
+            threading.Thread(target=self.handle_wait_user, args=(robot, task), daemon=True).start()
+
         task.complete_task()
         robot.status = "PENDING"
         robot.create_idle_task()
@@ -1461,27 +1462,29 @@ class DBWatcherWorker(QObject):
 # ======================================================================
 
 
+from dataclasses import dataclass
+from typing import Optional, List, Tuple, Dict, Set
+import heapq, math
+
+
 @dataclass
 class PathNode:
-    """경로 계획용 노드"""
-
     row: int
     col: int
-    g_cost: float = 0.0  # 시작점부터의 비용
-    h_cost: float = 0.0  # 목표점까지의 추정 비용
+    g_cost: float = 0.0
+    h_cost: float = 0.0
     parent: Optional["PathNode"] = None
+    direction: Optional[Tuple[int, int]] = None  # 직전 이동 방향 추가
 
     @property
-    def f_cost(self) -> float:
+    def f_cost(self):
         return self.g_cost + self.h_cost
 
     def __lt__(self, other):
         return self.f_cost < other.f_cost
 
     def __eq__(self, other):
-        if isinstance(other, PathNode):
-            return self.row == other.row and self.col == other.col
-        return False
+        return isinstance(other, PathNode) and (self.row, self.col) == (other.row, other.col)
 
     def __hash__(self):
         return hash((self.row, self.col))
@@ -1490,14 +1493,19 @@ class PathNode:
 class MultiRobotPathPlanner:
     """멀티 로봇 경로 계획 시스템"""
 
-    def __init__(self, grid_rows: int, grid_cols: int):
+    # 4방향 상하좌우
+    DIRECTIONS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    def __init__(self, grid_rows: int, grid_cols: int, heuristic: str = "euclidean"):
         self.grid_rows = grid_rows
         self.grid_cols = grid_cols
         self.obstacles: Set[Tuple[int, int]] = set()
         self.robot_paths: Dict[int, List[Tuple[int, int]]] = {}
         self.robot_goals: Dict[int, Tuple[float, float, float]] = {}
-        self.safety_margin = 2  # 로봇 간 안전 거리 (그리드 셀 단위)
+        self.safety_margin = 1
+        self.heuristic = heuristic
 
+    # ---------------- 기본 유틸 ----------------
     def set_obstacles(self, obstacles: Set[Tuple[int, int]]):
         """장애물 위치 설정"""
         self.obstacles = obstacles.copy()
@@ -1507,156 +1515,135 @@ class MultiRobotPathPlanner:
         self.robot_goals[robot_id] = goal
 
     def is_valid_position(self, row: int, col: int, exclude_robot: int = None) -> bool:
-        """유효한 위치인지 확인"""
-        # 그리드 범위 확인
+        """그리드 범위, 장애물, 다른 로봇과의 충돌 검사"""
+        # 범위 확인
         if not (0 <= row < self.grid_rows and 0 <= col < self.grid_cols):
             return False
-
         # 장애물 확인
         if (row, col) in self.obstacles:
             return False
-
-        # 다른 로봇과의 충돌 확인
+        # 다른 로봇과 충돌 검사
         for robot_id, path in self.robot_paths.items():
             if robot_id == exclude_robot:
                 continue
-            if path and len(path) > 0:
-                # 현재 로봇 위치와 안전 거리 확인
-                robot_pos = path[0] if path else None
-                if (
-                    robot_pos
-                    and self.manhattan_distance((row, col), robot_pos)
-                    <= self.safety_margin
-                ):
+            if path:
+                robot_pos = path[0]
+                if self.manhattan_distance((row, col), robot_pos) <= self.safety_margin:
                     return False
-
         return True
 
     def manhattan_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
-        """맨해튼 거리 계산"""
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
     def euclidean_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
-        """유클리드 거리 계산"""
         return math.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
 
-    def get_neighbors(
-        self, node: PathNode, exclude_robot: int = None
-    ) -> List[PathNode]:
-        """인접 노드 가져오기 (8방향)"""
-        neighbors = []
-        # directions 리스트에 (0, 0) 추가
-        directions = [
-            # (-1, -1),
-            (-1, 0),
-            # (-1, 1),
-            (0, -1),
-            (0, 1),
-            # (1, -1),
-            (1, 0),
-            # (1, 1),
-        ]
+    def heuristic_cost(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+        if self.heuristic == "euclidean":
+            return self.euclidean_distance(pos1, pos2)
+        else:  # 기본은 맨해튼
+            return self.manhattan_distance(pos1, pos2)
 
-        for dr, dc in directions:
+    # ---------------- 경로 탐색 ----------------
+    def get_neighbors(self, node: PathNode, exclude_robot: int = None) -> List[PathNode]:
+        neighbors = []
+        for dr, dc in self.DIRECTIONS:
             new_row, new_col = node.row + dr, node.col + dc
             if self.is_valid_position(new_row, new_col, exclude_robot):
                 neighbors.append(PathNode(new_row, new_col))
-
         return neighbors
 
-    def astar_pathfind(
-        self, start: Tuple[int, int], goal: Tuple[int, int], exclude_robot: int = None
-    ) -> List[Tuple[int, int]]:
-        """A* 알고리즘으로 경로 탐색"""
+    def reconstruct_path(self, node: PathNode) -> List[Tuple[int, int]]:
+        path = []
+        while node:
+            path.append((node.row, node.col))
+            node = node.parent
+        return path[::-1]
+
+    def astar_pathfind(self, start: Tuple[int, int], goal: Tuple[int, int], exclude_robot: int = None) -> List[Tuple[int, int]]:
         start_node = PathNode(start[0], start[1])
         goal_node = PathNode(goal[0], goal[1])
 
-        open_list = [start_node]
+        open_heap = []
+        open_dict = {}
         closed_set = set()
 
-        while open_list:
-            current_node = heapq.heappop(open_list)
+        start_node.g_cost = 0
+        start_node.h_cost = self.heuristic_cost(start, goal)
 
-            if current_node == goal_node:
-                # 경로 재구성
-                path = []
-                while current_node:
-                    path.append((current_node.row, current_node.col))
-                    current_node = current_node.parent
-                return path[::-1]
+        heapq.heappush(open_heap, (start_node.f_cost, id(start_node), start_node))
+        open_dict[(start_node.row, start_node.col)] = start_node
+
+        TURN_COST = 0.5  # 회전 비용 (조절 가능)
+
+        while open_heap:
+            _, _, current_node = heapq.heappop(open_heap)
+
+            if (current_node.row, current_node.col) == (goal_node.row, goal_node.col):
+                return self.reconstruct_path(current_node)
 
             closed_set.add((current_node.row, current_node.col))
 
-            for neighbor in self.get_neighbors(current_node, exclude_robot):
+            for dr, dc in self.DIRECTIONS:
+                new_row, new_col = current_node.row + dr, current_node.col + dc
+                if not self.is_valid_position(new_row, new_col, exclude_robot):
+                    continue
+
+                # 새 노드 생성
+                new_direction = (dr, dc)
+                neighbor = PathNode(new_row, new_col, parent=current_node, direction=new_direction)
+
                 if (neighbor.row, neighbor.col) in closed_set:
                     continue
 
-                # 대각선 이동인지 확인
-                is_diagonal = (
-                    abs(neighbor.row - current_node.row) == 1
-                    and abs(neighbor.col - current_node.col) == 1
-                )
-                move_cost = (
-                    1.414 if is_diagonal else 1.0
-                )  # 대각선 이동은 더 비용이 높음
+                # 이동 비용
+                move_cost = 1.0
+                turn_penalty = 0.0
+                if current_node.direction and current_node.direction != new_direction:
+                    turn_penalty = TURN_COST
 
-                tentative_g_cost = current_node.g_cost + move_cost
+                tentative_g = current_node.g_cost + move_cost + turn_penalty
 
-                # 기존 노드보다 더 나은 경로인지 확인
-                existing_node = None
-                for node in open_list:
-                    if node == neighbor:
-                        existing_node = node
-                        break
-
-                if existing_node is None or tentative_g_cost < existing_node.g_cost:
-                    neighbor.g_cost = tentative_g_cost
-                    neighbor.h_cost = self.euclidean_distance(
-                        (neighbor.row, neighbor.col), goal
-                    )
+                if (neighbor.row, neighbor.col) not in open_dict or tentative_g < open_dict[(neighbor.row, neighbor.col)].g_cost:
+                    neighbor.g_cost = tentative_g
+                    neighbor.h_cost = self.heuristic_cost((neighbor.row, neighbor.col), goal)
                     neighbor.parent = current_node
+                    open_dict[(neighbor.row, neighbor.col)] = neighbor
+                    heapq.heappush(open_heap, (neighbor.f_cost, id(neighbor), neighbor))
 
-                    if existing_node is None:
-                        heapq.heappush(open_list, neighbor)
+        return []  # 경로 없음
 
-        return []  # 경로를 찾을 수 없음
 
+    # ---------------- 멀티 로봇 ----------------
     def plan_multi_robot_paths(
         self, robot_positions: Dict[int, Tuple[int, int]]
     ) -> Dict[int, List[Tuple[int, int]]]:
         """멀티 로봇 경로 계획"""
         planned_paths = {}
 
-        # 우선순위: 목표가 더 가까운 로봇부터 계획
+        # 목표까지 거리 기준 우선순위 (가까운 로봇 먼저)
         robot_priorities = []
         for robot_id, position in robot_positions.items():
             if robot_id in self.robot_goals:
-                goal = self.robot_goals[robot_id]
-                pos = goal[:2]  # 기존 (row, col) 형태
-                distance = self.euclidean_distance(position, pos)
+                goal = self.robot_goals[robot_id][:2]
+                distance = self.heuristic_cost(position, goal)
                 robot_priorities.append((distance, robot_id, position))
-
-        robot_priorities.sort()  # 거리 순으로 정렬
-
-        # print(robot_priorities)
+        robot_priorities.sort()
 
         # 각 로봇에 대해 순차적으로 경로 계획
         for _, robot_id, position in robot_priorities:
-            if robot_id in self.robot_goals:
-                goal = self.robot_goals[robot_id]
-                if goal is None:
-                    goal = position
-                goal = goal[:2]
-                path = self.astar_pathfind(position, goal, exclude_robot=robot_id)
-                if path:
-                    planned_paths[robot_id] = path
-                    self.robot_paths[robot_id] = path
-                else:
-                    # 경로를 찾을 수 없으면 현재 위치 유지
-                    planned_paths[robot_id] = [position]
-                    self.robot_paths[robot_id] = [position]
+            goal = self.robot_goals[robot_id][:2]
+            path = self.astar_pathfind(position, goal, exclude_robot=robot_id)
+            if path:
+                planned_paths[robot_id] = path
+                self.robot_paths[robot_id] = path
+            else:
+                planned_paths[robot_id] = [position]  # 경로 없으면 제자리
+                self.robot_paths[robot_id] = [position]
 
         return planned_paths
+
+
     
 from dataclasses import dataclass
 from typing import Optional
@@ -1922,8 +1909,8 @@ class TaskManagerWidget(QWidget):
     def create_inbound_task(self, process_id):
         """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
         rack_location : MyLocation = self.visualizer_widget.get_inbound_target_pose()
-        ib_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.28, 0.0))
-        arm_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.28, 0.0))
+        ib_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.5,0.25, 0.0))
+        arm_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.5,0.25, 0.0))
         steps = [
             Task(f"{process_id}_1", "MOVE_TO_INBOUND", "MOBILE", ib_location), # 랙 위치
             Task(f"{process_id}_2", "LOAD", "ARM", arm_location), # 로봇 암이 픽업하는 위치; 안줘도 됨
@@ -1935,8 +1922,8 @@ class TaskManagerWidget(QWidget):
     def create_outbound_task(self, process_id, item_id = None, item_amount = None):
         """입고 작업 생성: 물건을 가져와서 진열하는 작업"""
         rack_location : MyLocation = self.visualizer_widget.get_outbound_target_pose()
-        ob_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.78, 0.0))
-        arm_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.6,0.78, 0.0))
+        ob_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.5,0.75, 0.0))
+        arm_location : MyLocation = MyLocation(-1, -1, -1, -1, (0.5,0.75, 0.0))
         steps = [
             Task(f"{process_id}_1", "MOVE_TO_RACK", "MOBILE", rack_location),
             Task(f"{process_id}_2", "WAIT_USER", "MOBILE", rack_location), # 랙 위치
@@ -2074,7 +2061,7 @@ class GridCameraWidget(QWidget):
         self.task_widget : TaskManagerWidget = None
         # === 설정 값 ===
         self.camera_index = 2
-        self.grid_rows = 5
+        self.grid_rows = 6
         self.grid_cols = 10
         self.real_width = 2  # 실제 너비 (미터)
         self.real_height = 1  # 실제 높이 (미터)
@@ -2248,15 +2235,15 @@ class GridCameraWidget(QWidget):
         path_layout.addWidget(self.clear_paths_button)
 
         # # 웨이포인트 관련 UI
-        # waypoint_layout = QHBoxLayout()
+        waypoint_layout = QHBoxLayout()
         # self.test_waypoints_button = QPushButton("테스트 웨이포인트 설정")
         # self.test_waypoints_button.clicked.connect(self.set_test_waypoints)
         # waypoint_layout.addWidget(self.test_waypoints_button)
 
-        # self.clear_waypoints_button = QPushButton("웨이포인트 지우기")
-        # self.clear_waypoints_button.clicked.connect(self.clear_waypoints)
-        # waypoint_layout.addWidget(self.clear_waypoints_button)
-        # path_layout.addLayout(waypoint_layout)
+        self.clear_waypoints_button = QPushButton("웨이포인트 지우기")
+        self.clear_waypoints_button.clicked.connect(self.clear_waypoints)
+        waypoint_layout.addWidget(self.clear_waypoints_button)
+        path_layout.addLayout(waypoint_layout)
 
         # 로봇 제어 관련 UI
         control_layout = QVBoxLayout()
@@ -3011,6 +2998,7 @@ class GridCameraWidget(QWidget):
 
     def draw_grid(self):
         """그리드 선 그리기"""
+        color = (0, 0, 255)  # 그리드 선 색상
         corners = np.array(self.corner_points[:4], dtype=np.float32)
 
         # 각 그리드 포인트 계산
@@ -3038,7 +3026,7 @@ class GridCameraWidget(QWidget):
                         self.current_frame,
                         tuple(grid_point.astype(int)),
                         tuple(next_grid.astype(int)),
-                        (255, 255, 0),
+                        color,
                         1,
                     )
 
@@ -3056,7 +3044,7 @@ class GridCameraWidget(QWidget):
                         self.current_frame,
                         tuple(grid_point.astype(int)),
                         tuple(next_grid_point.astype(int)),
-                        (255, 255, 0),
+                        color,
                         1,
                     )
 
@@ -3603,8 +3591,6 @@ class GridCameraWidget(QWidget):
                 )
                 
                 self.robot_current_waypoint_index[robot_id] = current_index + 1
-                
-                # 다음 목표를 위해 리셋
                 self.robot_target_published[robot_id] = False
 
                 if current_index + 1 >= len(waypoints):
@@ -3622,7 +3608,7 @@ class GridCameraWidget(QWidget):
                     if self.enable_robot_control and self.ros_node:
                         print(f"✅ 로봇{robot_id} 최종 위치에서 원하는 포즈(yaw={final_yaw:.2f})로 회전")
                         self.ros_node.publish_target_pose(robot_id, final_x, final_y, final_yaw)
-                        self.ros_node.stop_robot(robot_id)
+                        # self.ros_node.stop_robot(robot_id)
                         self.task_widget.complete_task(robot_id)
                 else:
                     # 다음 웨이포인트
@@ -3663,6 +3649,7 @@ class GridCameraWidget(QWidget):
                     and self.ros_node
                     and not self.robot_target_published.get(robot_id, False)
                 ):
+
                     yaw_cur = math.atan2(target_y - robot_y, target_x - robot_x)
                     print(
                         f"현재 웨이포인트를 발행 {robot_id,target_x,target_y,yaw_cur}"
@@ -3672,6 +3659,8 @@ class GridCameraWidget(QWidget):
                         robot_id, target_x, target_y, yaw_cur
                     )
                     self.robot_target_published[robot_id] = True
+                    print(f"로봇{robot_id} 경로 재계획")
+                    self.plan_robot_paths()
 
     def plan_to_waypoint(self, robot_id, target_waypoint):
         """특정 웨이포인트로의 경로 계획"""
