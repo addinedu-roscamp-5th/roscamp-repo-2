@@ -44,15 +44,15 @@ def generate_launch_description():
         # ),
         Node(
             package='bolt_fms',
-            executable='tcp_gateway',
-            name='tcp_gateway'
-        ),
-        Node(
-            package='bolt_fms',
             executable='integrated_grid_camera_app.py',
             name='integrated_grid_camera_app',
             output='screen',          # <- 화면에 출력
             emulate_tty=True,         # 버퍼링 방지
+        ),
+        Node(
+            package='bolt_fms',
+            executable='bolt_fms_core',
+            name='bolt_fms_core'
         ),
         # domain_bridge 노드는 ExecuteProcess로 실행해야 함
         ExecuteProcess(

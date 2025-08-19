@@ -100,8 +100,10 @@ private:
 
     add_sub<geometry_msgs::msg::Pose>("/camera_pose", id, [this, id](auto msg) {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (robot_types_[id] == RobotType::MOBILE)
+      if (robot_types_[id] == RobotType::MOBILE){
         mobile_states_[id].pose = *msg;
+        RCLCPP_INFO(this->get_logger(), "✅ camera_pose : %f %f %f", msg->position.x, msg->position.y, msg->position.z);
+      }
       else
         arm_states_[id].pose = *msg;
     });
@@ -140,8 +142,8 @@ private:
         tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-        j[id] = { { "type", "mobile" },
-                  { "task", "Idle" },       // ✅ 향후 task_manager에서 동기화 가능
+        j[id] = { { "type", "MOBILE" },
+                  { "task", "IDLE" },       // ✅ 향후 task_manager에서 동기화 가능
                   { "status", "PENDING" },  // ✅ 향후 상태매니저와 연동 가능
                   { "battery", s.battery },
                   { "pose", { { "x", pose.position.x }, { "y", pose.position.y }, { "yaw", yaw } } },
@@ -156,8 +158,8 @@ private:
         tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-        j[id] = { { "type", "arm" },
-                  { "task", "Unload" },  // ✅ 추후 실제 할당 작업 연결 가능
+        j[id] = { { "type", "ARM" },
+                  { "task", "UNLOAD" },  // ✅ 추후 실제 할당 작업 연결 가능
                   { "status", "INPROGRESS(PICK)" },
                   { "battery", s.battery },
                   { "pose", { { "x", pose.position.x }, { "y", pose.position.y }, { "yaw", yaw } } },

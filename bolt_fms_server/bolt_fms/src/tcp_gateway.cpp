@@ -65,12 +65,12 @@ private:
                                                   std::lock_guard<std::mutex> lock(state_mutex_);
                                                   robot_states_[id].battery = msg->data;
                                                 });
-
     std::string pose_topic = "/" + id + "/camera_pose";
     create_subscription<geometry_msgs::msg::Pose>(pose_topic, 10,
                                                   [this, id](const geometry_msgs::msg::Pose::SharedPtr msg) {
                                                     std::lock_guard<std::mutex> lock(state_mutex_);
                                                     robot_states_[id].pose = *msg;
+                                                    RCLCPP_INFO(this->get_logger(), "✅ camera_pose : %f %f %f", msg->position.x, msg->position.y, msg->position.z);
                                                   });
 
     std::string joint_topic = "/" + id + "/joint_states";
@@ -150,6 +150,7 @@ private:
       while (tcp_running_)
       {
         std::string data = get_robot_status_json();
+        RCLCPP_INFO(this->get_logger(), "✅ 클라이언트 get_robot_status_json 전송: %s", data.c_str());
         send(client_fd, data.c_str(), data.length(), 0);
         send(client_fd, "\n", 1, 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
