@@ -1,7 +1,7 @@
 // bolt_fms_core.cpp - 리눅스 기반 TCP 서버
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float32.hpp>
-#include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <sensor_msgs/msg/joint_state.hpp>
@@ -35,17 +35,18 @@ struct RobotInfo
   RobotType type;
 };
 
+// ✅ PoseStamped로 수정
 struct MobileStatus
 {
   float battery = -1.0f;
-  geometry_msgs::msg::Pose pose;
+  geometry_msgs::msg::PoseStamped pose;
   float velocity = 0.0f;
 };
 
 struct ArmStatus
 {
   float battery = -1.0f;
-  geometry_msgs::msg::Pose pose;
+  geometry_msgs::msg::PoseStamped pose;
   std::vector<double> joint_angles;
 };
 
@@ -89,6 +90,7 @@ private:
     const std::string& id = robot.robot_id;
     robot_types_[id] = robot.type;
 
+    // 🔋 배터리
     add_sub<std_msgs::msg::Float32>("/battery", id, [this, id](auto msg) {
       std::lock_guard<std::mutex> lock(mutex_);
       float val = msg->data;
@@ -96,16 +98,18 @@ private:
         mobile_states_[id].battery = val;
       else
         arm_states_[id].battery = val;
+      // RCLCPP_INFO(this->get_logger(), "✅ battery : %f",
+      //               val);
     });
 
-    add_sub<geometry_msgs::msg::Pose>("/camera_pose", id, [this, id](auto msg) {
+    // 📷 PoseStamped
+    add_sub<geometry_msgs::msg::PoseStamped>("/camera_pose", id, [this, id](auto msg) {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (robot_types_[id] == RobotType::MOBILE){
+      if (robot_types_[id] == RobotType::MOBILE) {
         mobile_states_[id].pose = *msg;
-        RCLCPP_INFO(this->get_logger(), "✅ camera_pose : %f %f %f", msg->position.x, msg->position.y, msg->position.z);
-      }
-      else
+      } else {
         arm_states_[id].pose = *msg;
+      }
     });
 
     if (robot.type == RobotType::MOBILE)
@@ -131,22 +135,25 @@ private:
 
     for (const auto& [id, type] : robot_types_)
     {
-      geometry_msgs::msg::Pose pose;
-      
+      geometry_msgs::msg::PoseStamped pose;
+
       double roll = 0.0, pitch = 0.0, yaw = 0.0;
       if (type == RobotType::MOBILE)
       {
         auto& s = mobile_states_[id];
         pose = s.pose;
 
-        tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+        tf2::Quaternion q(pose.pose.orientation.x, pose.pose.orientation.y,
+                          pose.pose.orientation.z, pose.pose.orientation.w);
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
         j[id] = { { "type", "MOBILE" },
-                  { "task", "IDLE" },       // ✅ 향후 task_manager에서 동기화 가능
-                  { "status", "PENDING" },  // ✅ 향후 상태매니저와 연동 가능
+                  { "task", "IDLE" },
+                  { "status", "PENDING" },
                   { "battery", s.battery },
-                  { "pose", { { "x", pose.position.x }, { "y", pose.position.y }, { "yaw", yaw } } },
+                  { "pose", { { "x", pose.pose.position.x },
+                              { "y", pose.pose.position.y },
+                              { "yaw", yaw } } },
                   { "velocity", s.velocity },
                   { "joints", json::array() } };
       }
@@ -155,14 +162,17 @@ private:
         auto& s = arm_states_[id];
         pose = s.pose;
 
-        tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+        tf2::Quaternion q(pose.pose.orientation.x, pose.pose.orientation.y,
+                          pose.pose.orientation.z, pose.pose.orientation.w);
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
         j[id] = { { "type", "ARM" },
-                  { "task", "UNLOAD" },  // ✅ 추후 실제 할당 작업 연결 가능
+                  { "task", "UNLOAD" },
                   { "status", "INPROGRESS(PICK)" },
                   { "battery", s.battery },
-                  { "pose", { { "x", pose.position.x }, { "y", pose.position.y }, { "yaw", yaw } } },
+                  { "pose", { { "x", pose.pose.position.x },
+                              { "y", pose.pose.position.y },
+                              { "yaw", yaw } } },
                   { "velocity", 0.0 },
                   { "joints", s.joint_angles } };
       }

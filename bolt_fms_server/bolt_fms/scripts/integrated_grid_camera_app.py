@@ -880,6 +880,7 @@ class ProcessTask:
 
 import select_location
 import threading
+import asyncio
 
 class TaskManager:
     def __init__(self, camera = None):
@@ -894,6 +895,8 @@ class TaskManager:
         self.on_task_assigned = (
             None
         )         
+        self.wait = False
+
     
     def add_process_task(self, process: ProcessTask):
         self.all_process_tasks.append(process)
@@ -901,16 +904,21 @@ class TaskManager:
         if step:
             self.task_queue.put((step.priority, time.time(), step))
 
-    async def handle_wait_user(self, robot, task):
-        robot.assign_task(task)
-        time.sleep(5.0)
+
+    async def handle_wait_user(self, robot):
+        self.wait = True
         print("작업자 대기중 ...")
+        await asyncio.sleep(10)   # 비동기 대기
         self.complete_task(robot.robot_id)
         print("작업자 작업완료")
+        self.wait = False
 
     # TaskManager 클래스의 assign_tasks_waypoint 메서드
     def assign_tasks_waypoint(self):
         """Taskmanager 작업 할당 실시!"""
+        if self.wait:
+            return
+
         messages = []
         new_queue = PriorityQueue()
 
@@ -1019,9 +1027,14 @@ class TaskManager:
                         print(f"❌ 로봇 {robot.robot_id}의 경로를 찾을 수 없습니다.")
 
                 elif task.robot_type == "MOBILE" and task.task_type == "WAIT_USER":
-                    # 모바일 로봇이 사용자 대기 작업을 수행하는 경우
-                    # print(task.location)
+                    # loc: MyLocation = task.location
+                    # if loc:
+                    #     self.camera.task_widget.visualizer_widget.set_location_occupied(
+                    #         loc.rack_id, loc.floor, loc.row, loc.col, True
+                    #     )
+                    #     # 이벤트 루프에서 비동기로 실행
                     pass
+
                 elif task.robot_type == "ARM" and task.task_type == "LOAD":
                     loc : MyLocation = task.location
                     
@@ -1080,46 +1093,49 @@ class TaskManager:
                     closest = robot
         return closest
 
+    # import threading
+
     def complete_task(self, robot_id):
-        robot : Robot = self.robots.get(robot_id)
+        robot: Robot = self.robots.get(robot_id)
         if not robot or not robot.current_task.task_type:
             return f"ℹ️ Robot {robot_id} has no active task."
 
-        task : Task = robot.current_task
-        loc : MyLocation = task.location
-        if task.task_type == "WAIT_USER":
-            self.camera.task_widget.visualizer_widget.set_location_occupied(loc.rack_id, loc.floor, loc.row, loc.col, True)
-            threading.Thread(target=self.handle_wait_user, args=(robot, task), daemon=True).start()
+        task: Task = robot.current_task
+        loc: MyLocation = task.location
 
+        if task.task_type == "WAIT_USER":
+            self.camera.task_widget.visualizer_widget.set_location_occupied(
+                loc.rack_id, loc.floor, loc.row, loc.col, True
+            )
+            # 3초 후에 실제 완료 실행
+            threading.Timer(3.0, self._finish_wait_user_task, args=(robot, task)).start()
+            return f"⏳ Robot {robot_id} waiting for user..."
+        else:
+            return self._finish_task(robot, task)
+
+
+    def _finish_wait_user_task(self, robot, task):
+        self._finish_task(robot, task)
+
+
+    def _finish_task(self, robot, task):
         task.complete_task()
         robot.status = "PENDING"
         robot.create_idle_task()
 
-        # # process task 찾고 다음 단계로 진행
-        # for comp in self.all_process_tasks:
-        #     if task in comp.steps:
-        #         comp.advance()
-        #         next_step = comp.current_step()
-        #         if next_step:
-        #             self.task_queue.put((next_step.priority, time.time(), next_step))
-        #             return f"✅ Completed task {task.task_id}, next step {next_step.task_type} enqueued"
-        #         else:
-        #             return f"✅ Process task {comp.task_id} fully completed"
-
-        # return f"✅ Task {task.task_id} completed by Robot {robot_id}"
         for comp in self.all_process_tasks:
             if any(step.task_id == task.task_id for step in comp.steps):
                 comp.advance()
                 next_step = comp.current_step()
-
-                if next_step is not None:
+                if next_step:
                     self.task_queue.put((next_step.priority, time.time(), next_step))
                     self.assign_tasks_waypoint()
                     return f"✅ Completed task {task.task_id}, next step {next_step.task_type} enqueued"
                 else:
                     return f"✅ Process task {comp.task_id} fully completed"
 
-        return f"✅ Task {task.task_id} completed by Robot {robot_id}"
+        return f"✅ Task {task.task_id} completed by Robot {robot.robot_id}"
+
 
 
 
@@ -1372,7 +1388,7 @@ class DBWatcherWorker(QObject):
         """
         SQLAlchemy를 사용하여 입고(Inbound) 및 출고(Outbound) 테이블의 새로운 레코드를 확인합니다.
         """
-        self._poll_inbound()
+        # self._poll_inbound()
         self._poll_outbound()
 
     def _poll_inbound(self):
