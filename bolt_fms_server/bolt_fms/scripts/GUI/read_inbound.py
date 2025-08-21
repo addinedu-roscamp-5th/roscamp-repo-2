@@ -3,17 +3,17 @@ import sys
 import rclpy
 from rclpy.node import Node
 import requests
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QFormLayout, QGroupBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
-from PyQt5.QtCore import QTimer
-from PyQt5.QtGui import QFont
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QFont
 
 FASTAPI_SERVER_URL = "http://127.0.0.1:8000"
 
 # ─────────────────────────────────────
-# PyQt GUI 애플리케이션
+# PySide6 GUI 애플리케이션
 # ─────────────────────────────────────
 class InboundApp(QWidget):
     def __init__(self):
@@ -59,4 +59,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = InboundApp()
     ex.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

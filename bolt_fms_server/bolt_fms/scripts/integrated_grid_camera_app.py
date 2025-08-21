@@ -1109,9 +1109,11 @@ class TaskManager:
             )
             # 3초 후에 실제 완료 실행
             threading.Timer(3.0, self._finish_wait_user_task, args=(robot, task)).start()
-            return f"⏳ Robot {robot_id} waiting for user..."
-        else:
-            return self._finish_task(robot, task)
+        #     return f"⏳ Robot {robot_id} waiting for user..."
+        # else:
+        #     return self._finish_task(robot, task)
+        return self._finish_task(robot, task)
+
 
 
     def _finish_wait_user_task(self, robot, task):
@@ -1388,7 +1390,7 @@ class DBWatcherWorker(QObject):
         """
         SQLAlchemy를 사용하여 입고(Inbound) 및 출고(Outbound) 테이블의 새로운 레코드를 확인합니다.
         """
-        # self._poll_inbound()
+        self._poll_inbound()
         self._poll_outbound()
 
     def _poll_inbound(self):

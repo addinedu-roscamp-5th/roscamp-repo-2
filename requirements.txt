@@ -13,3 +13,4 @@ pandas
 google-generativeai 
 markdown
 pymysql
+tabulate

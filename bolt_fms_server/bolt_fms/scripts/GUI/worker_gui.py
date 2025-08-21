@@ -1,7 +1,11 @@
 import sys
 import requests
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QLabel, QGroupBox
-from PyQt5.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
+    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
+    QMessageBox, QLabel, QGroupBox
+)
+from PySide6.QtCore import Qt
 
 # FastAPI 서버의 기본 URL을 설정합니다.
 FASTAPI_SERVER_URL = "http://127.0.0.1:8000"
@@ -214,4 +218,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = InboundApp()
     ex.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

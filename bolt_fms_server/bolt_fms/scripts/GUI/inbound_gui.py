@@ -4,12 +4,12 @@ import rclpy
 from rclpy.node import Node
 from bolt_fms.msg import InboundUpdate
 import requests
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QFormLayout, QGroupBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
-from PyQt5.QtCore import QTimer
-from PyQt5.QtGui import QFont
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QFont
 
 FASTAPI_SERVER_URL = "http://127.0.0.1:8000"
 
@@ -30,7 +30,7 @@ class WorkerNode(Node):
         self.get_logger().info(f"📦 ROS2 발행: ID={item_id}, 수량={item_amount}, 박스={ib_amount}")
 
 # ─────────────────────────────────────
-# PyQt GUI 애플리케이션
+# PySide6 GUI 애플리케이션
 # ─────────────────────────────────────
 class InboundApp(QWidget):
     def __init__(self, ros_node):
@@ -201,7 +201,7 @@ def main():
     timer.timeout.connect(lambda: rclpy.spin_once(ros_node, timeout_sec=0.01))
     timer.start(10)
 
-    app.exec_()
+    app.exec()   # ✅ PySide6는 exec() 사용
     ros_node.destroy_node()
     rclpy.shutdown()
 
