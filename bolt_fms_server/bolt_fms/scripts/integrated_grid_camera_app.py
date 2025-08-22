@@ -1108,7 +1108,7 @@ class TaskManager:
                 loc.rack_id, loc.floor, loc.row, loc.col, True
             )
             # 3초 후에 실제 완료 실행
-            threading.Timer(3.0, self._finish_wait_user_task, args=(robot, task)).start()
+            # threading.Timer(3.0, self._finish_wait_user_task, args=(robot, task)).start()
         #     return f"⏳ Robot {robot_id} waiting for user..."
         # else:
         #     return self._finish_task(robot, task)
@@ -1356,7 +1356,9 @@ from typing import List, Dict, Any
 
 # 수정된 DBManager 클래스와 Inbound 모델을 import 합니다.
 # 이 파일이 db_manager.py 및 models.py와 같은 디렉토리에 있다고 가정합니다.
-from models import Inbound, Outbound, Orders_Item, Item
+# from models import Inbound, Outbound, Orders_Item, Item
+from models import Base, Rack, Location, Inventory, Item, Orders, Orders_Item, Outbound, Inbound
+
 
 # DBManager 인스턴스 생성 (싱글톤이므로 한 번만 생성)
 # DBManager.__init__이 이제 인자를 받지 않으므로 괄호 안에 인자를 넣지 않습니다.
@@ -1391,7 +1393,7 @@ class DBWatcherWorker(QObject):
         SQLAlchemy를 사용하여 입고(Inbound) 및 출고(Outbound) 테이블의 새로운 레코드를 확인합니다.
         """
         self._poll_inbound()
-        self._poll_outbound()
+        # self._poll_outbound()
 
     def _poll_inbound(self):
         """
@@ -1520,7 +1522,7 @@ class MultiRobotPathPlanner:
         self.obstacles: Set[Tuple[int, int]] = set()
         self.robot_paths: Dict[int, List[Tuple[int, int]]] = {}
         self.robot_goals: Dict[int, Tuple[float, float, float]] = {}
-        self.safety_margin = 1
+        self.safety_margin = 0.5
         self.heuristic = heuristic
 
     # ---------------- 기본 유틸 ----------------
@@ -1892,7 +1894,7 @@ class TaskManagerWidget(QWidget):
             remaining -= current_batch
         self.update_tables()
 
-    def test_add_outbound(self, ob_id, items):
+    def test_add_outbound(self, ob_id=None, items=None):
         """출고 작업 추가"""
         print(f"🚚 출고 등록: 주문번호={ob_id}")
 
@@ -3750,94 +3752,194 @@ class GridCameraWidget(QWidget):
 
         return None
 
+# ───────────────────────────────
+# 예시용 DB 모델 (SQLAlchemy)
+# ───────────────────────────────
+# 실제 프로젝트에서는 이미 정의된 ORM 모델을 import 하면 됩니다.
+# from your_db_models import Inbound, Orders, Orders_Item, Inventory, Item
+from database import get_db
+from PySide6.QtWidgets import (
+    QWidget, QSplitter, QHBoxLayout, QVBoxLayout, QLabel,
+    QTableWidget, QTableWidgetItem, QHeaderView, QPushButton
+)
+from PySide6.QtCore import Qt
 
 class InOutInventoryWidget(QWidget):
-    """좌상=입고, 좌하=출고, 우측=재고 테이블 배치 탭"""
+    """좌상=입고, 좌하=출고, 우측=재고+챗봇 탭"""
 
-    def __init__(self, parent=None, task_widget=None):
+    def __init__(self, parent=None, task_widget=None, db_session=None):
         super().__init__(parent)
+        self.db_session = next(get_db())  # ✅ DB 세션 외부에서 주입
 
-        # ── 테이블 위젯들 ─────────────────────────────────────
-        self.inbound_table = QTableWidget(0, 4)  # 입고
-        self.outbound_table = QTableWidget(0, 4)  # 출고
-        self.inventory_table = QTableWidget(0, 5)  # 재고
-        self.chatbot_widget = RAGChatbot(task_widget=task_widget)  # TaskManagerWidget 전달
+        # ── 테이블 위젯들 ───────────────────────────
+        self.inbound_table = QTableWidget()
+        self.outbound_table = QTableWidget()
+        self.inventory_table = QTableWidget()
+        self.chatbot_widget = RAGChatbot(task_widget=task_widget)
 
-        self.inbound_table.setHorizontalHeaderLabels(["입고ID", "품목", "수량", "일시"])
-        self.outbound_table.setHorizontalHeaderLabels(
-            ["출고ID", "품목", "수량", "일시"]
-        )
-        self.inventory_table.setHorizontalHeaderLabels(
-            ["SKU", "품목", "재고수량", "위치", "최종갱신"]
-        )
-
-        # 더미데이터 채우기 (필요시 제거)
-        self._fill_dummy()
-
-        # ── 레이아웃: 좌측(상/하 스플리터) + 우측(재고) ───────
+        # ── 좌측 스플리터 (입고/출고) ────────────────
         left_splitter = QSplitter(Qt.Orientation.Vertical)
         left_splitter.addWidget(
-            self._wrap_with_label("📥 입고 내역", self.inbound_table)
+            self._wrap_with_label("📥 입고 내역", self.inbound_table, refresh=True)
         )
         left_splitter.addWidget(
-            self._wrap_with_label("📤 출고 내역", self.outbound_table)
+            self._wrap_with_label("📤 출고 내역", self.outbound_table, refresh=True)
         )
-        left_splitter.setSizes([1, 1])  # ✅ 좌상/좌하 초기 높이 비율을 균일하게 설정
+        left_splitter.setSizes([1, 1])
 
+        # ── 우측 스플리터 (재고/챗봇) ────────────────
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.addWidget(
-            self._wrap_with_label("📦 재고 내역", self.inventory_table) # ✅ self.inventory_table로 수정
+            self._wrap_with_label("📦 재고 내역", self.inventory_table, refresh=True)
         )
         right_splitter.addWidget(
-            self._wrap_with_label("❓ 물류 챗봇", self.chatbot_widget)
+            self._wrap_with_label("❓ 물류 챗봇", self.chatbot_widget, refresh=False)
         )
-        right_splitter.setSizes([1, 1])  # ✅ 재고/챗봇 초기 높이 비율을 균일하게 설정
+        right_splitter.setSizes([1, 1])
 
+        # ── 전체 레이아웃 ───────────────────────────
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter.addWidget(left_splitter)
         main_splitter.addWidget(right_splitter)
-        main_splitter.setSizes([1, 1])  # ✅ 좌/우 초기 폭 비율을 균일하게 설정
+        main_splitter.setSizes([1, 1])
 
-        # ── 탭 전체 레이아웃 ────────────────────────────────
         outer = QHBoxLayout(self)
         outer.addWidget(main_splitter)
 
-    def _wrap_with_label(self, title: str, table: QTableWidget) -> QWidget:
-        """섹션 제목 + 테이블을 세로로 감싸는 작은 패널"""
+        # ✅ 테이블 초기화 및 데이터 로드
+        self.setup_tables()
+
+    # ───────────────────────────────
+    # 테이블 초기 설정
+    # ───────────────────────────────
+    def setup_tables(self):
+        self._setup_inbound_table()
+        self._setup_outbound_table()
+        self._setup_inventory_table()
+        self.refresh_all()
+
+    def _setup_inbound_table(self):
+        headers = ["입고 ID", "상품 ID", "상품명", "박스당 개수", "입고 박스 수량", "총 입고 수량", "상태", "입고 일시"]
+        self.inbound_table.setColumnCount(len(headers))
+        self.inbound_table.setHorizontalHeaderLabels(headers)
+        self.inbound_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.inbound_table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+    def _setup_outbound_table(self):
+        headers = ["주문 ID", "상품 ID", "상품명", "주문 수량", "주문 상태", "배송지", "주문 일시"]
+        self.outbound_table.setColumnCount(len(headers))
+        self.outbound_table.setHorizontalHeaderLabels(headers)
+        self.outbound_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.outbound_table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+    def _setup_inventory_table(self):
+        headers = ["위치 ID", "상품 ID", "상품명", "입고 일시"]
+        self.inventory_table.setColumnCount(len(headers))
+        self.inventory_table.setHorizontalHeaderLabels(headers)
+        self.inventory_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.inventory_table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+    # ───────────────────────────────
+    # 새로고침 (데이터 리로드)
+    # ───────────────────────────────
+    def refresh_all(self):
+        """세 테이블 모두 새로고침"""
+        self.load_inbound_data()
+        self.load_outbound_data()
+        self.load_inventory_data()
+
+    # ───────────────────────────────
+    # 데이터 로드
+    # ───────────────────────────────
+    def load_inbound_data(self):
+        results = self.db_session.query(
+            Inbound.ib_id,
+            Inbound.item_id,
+            Item.item_name,
+            Inbound.item_amount,
+            Inbound.ib_amount,
+            Inbound.ib_status,
+            Inbound.ib_dttm
+        ).join(Item, Inbound.item_id == Item.item_id).order_by(Inbound.ib_id.asc()).all()
+
+        self.inbound_table.clearContents()   # ✅ 기존 내용 삭제
+        self.inbound_table.setRowCount(len(results))
+
+        for row_idx, row_data in enumerate(results):
+            total_amount = row_data[3] * row_data[4]
+            for col_idx, data in enumerate(row_data):
+                item = QTableWidgetItem(str(data))
+                if col_idx == 4:
+                    self.inbound_table.setItem(row_idx, col_idx, item)
+                    self.inbound_table.setItem(row_idx, col_idx + 1, QTableWidgetItem(str(total_amount)))
+                else:
+                    adj_col_idx = col_idx if col_idx <= 4 else col_idx + 1
+                    self.inbound_table.setItem(row_idx, adj_col_idx, item)
+
+    def load_outbound_data(self):
+        results = self.db_session.query(
+            Orders.order_id,
+            Orders_Item.item_id,
+            Item.item_name,
+            Orders_Item.order_amount,
+            Orders.order_status,
+            Orders.destination,
+            Orders.order_dttm
+        ).join(Orders_Item, Orders.order_id == Orders_Item.order_id) \
+         .join(Item, Orders_Item.item_id == Item.item_id).all()
+
+        self.outbound_table.clearContents()  # ✅ 기존 내용 삭제
+        self.outbound_table.setRowCount(len(results))
+
+        for row_idx, row_data in enumerate(results):
+            for col_idx, data in enumerate(row_data):
+                self.outbound_table.setItem(row_idx, col_idx, QTableWidgetItem(str(data)))
+
+    def load_inventory_data(self):
+        results = self.db_session.query(
+            Inventory.location_id,
+            Inventory.item_id,
+            Item.item_name,
+            Inventory.iv_dttm
+        ).join(Item, Inventory.item_id == Item.item_id).order_by(Inventory.location_id.asc()).all()
+
+        self.inventory_table.clearContents() # ✅ 기존 내용 삭제
+        self.inventory_table.setRowCount(len(results))
+
+        for row_idx, row_data in enumerate(results):
+            for col_idx, data in enumerate(row_data):
+                self.inventory_table.setItem(row_idx, col_idx, QTableWidgetItem(str(data)))
+
+
+    # ───────────────────────────────
+    # Helper: 라벨 + 테이블 감싸기 + 새로고침 버튼
+    # ───────────────────────────────
+    def _wrap_with_label(self, title: str, widget: QWidget, refresh: str = None) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
+
+        header_lay = QHBoxLayout()
         lbl = QLabel(title)
         lbl.setStyleSheet("font-weight: 600;")
-        lay.addWidget(lbl)
-        lay.addWidget(table)
+        header_lay.addWidget(lbl)
+
+        if refresh == True:
+            btn = QPushButton("🔄 새로고침")
+            btn.clicked.connect(self.load_inbound_data)
+            header_lay.addWidget(btn)
+        elif refresh == True:
+            btn = QPushButton("🔄 새로고침")
+            btn.clicked.connect(self.load_outbound_data)
+            header_lay.addWidget(btn)
+        elif refresh == True:
+            btn = QPushButton("🔄 새로고침")
+            btn.clicked.connect(self.load_inventory_data)
+            header_lay.addWidget(btn)
+
+        header_lay.addStretch()
+        lay.addLayout(header_lay)
+        lay.addWidget(widget)
         return w
-
-    def _fill_dummy(self):
-        """테스트용 더미 데이터"""
-        inbound_rows = [
-            ("IB-001", "모터 A", "10", "2025-08-10 10:05"),
-            ("IB-002", "컨베이어벨트", "3", "2025-08-10 12:21"),
-        ]
-        outbound_rows = [
-            ("OB-101", "모터 A", "4", "2025-08-10 13:10"),
-            ("OB-102", "베어링 B", "6", "2025-08-10 13:32"),
-        ]
-        inventory_rows = [
-            ("SKU-1001", "모터 A", "26", "A-01-03", "2025-08-10 13:10"),
-            ("SKU-2002", "컨베이어벨트", "7", "B-02-01", "2025-08-10 12:21"),
-            ("SKU-3003", "베어링 B", "14", "C-01-02", "2025-08-10 13:32"),
-        ]
-
-        def load_rows(table, rows):
-            table.setRowCount(len(rows))
-            for r, row in enumerate(rows):
-                for c, val in enumerate(row):
-                    table.setItem(r, c, QTableWidgetItem(val))
-            table.resizeColumnsToContents()
-
-        load_rows(self.inbound_table, inbound_rows)
-        load_rows(self.outbound_table, outbound_rows)
-        load_rows(self.inventory_table, inventory_rows)
 
 
 class SingleButtonWidget(QWidget):
