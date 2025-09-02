@@ -133,9 +133,7 @@ colcon build --packages-select bolt_fms
 source ./install/local_setup.bash
 
 # 핵심 노드 실행
-ros2 run bolt_fms bolt_fms_core          # TCP 게이트웨이
-ros2 run bolt_fms agent_manager_node     # 에이전트 관리
-ros2 run bolt_fms task_manager_node      # 작업 관리
+ros2 launch bolt_fms fms_server_launch.py
 ```
 
 ### Bolt Mall 웹 서버 실행
